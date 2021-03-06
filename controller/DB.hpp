@@ -1,31 +1,20 @@
 /*
- * ZeroTier One - Network Virtualization Everywhere
- * Copyright (C) 2011-2019  ZeroTier, Inc.  https://www.zerotier.com/
+ * Copyright (c)2019 ZeroTier, Inc.
  *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * Use of this software is governed by the Business Source License included
+ * in the LICENSE.TXT file in the project's root directory.
  *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Change Date: 2023-01-01
  *
- * You should have received a copy of the GNU General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
- *
- * --
- *
- * You can be released from the requirements of the license by purchasing
- * a commercial license. Buying such a license is mandatory as soon as you
- * develop commercial closed-source software that incorporates or links
- * directly against ZeroTier software without disclosing the source code
- * of your own application.
+ * On the date above, in accordance with the Business Source License, use
+ * of this software will be governed by version 2.0 of the Apache License.
  */
+/****/
 
 #ifndef ZT_CONTROLLER_DB_HPP
 #define ZT_CONTROLLER_DB_HPP
+
+//#define ZT_CONTROLLER_USE_LIBPQ
 
 #include "../node/Constants.hpp"
 #include "../node/Identity.hpp"
@@ -40,13 +29,13 @@
 #include <unordered_set>
 #include <vector>
 #include <atomic>
+#include <mutex>
+#include <set>
 
 #include "../ext/json/json.hpp"
 
 namespace ZeroTier
 {
-
-class EmbeddedNetworkController;
 
 /**
  * Base class with common infrastructure for all controller DB implementations
@@ -54,6 +43,16 @@ class EmbeddedNetworkController;
 class DB
 {
 public:
+	class ChangeListener
+	{
+	public:
+		ChangeListener() {}
+		virtual ~ChangeListener() {}
+		virtual void onNetworkUpdate(const void *db,uint64_t networkId,const nlohmann::json &network) {}
+		virtual void onNetworkMemberUpdate(const void *db,uint64_t networkId,uint64_t memberId,const nlohmann::json &member) {}
+		virtual void onNetworkMemberDeauthorize(const void *db,uint64_t networkId,uint64_t memberId) {}
+	};
+
 	struct NetworkSummaryInfo
 	{
 		NetworkSummaryInfo() : authorizedMemberCount(0),totalMemberCount(0),mostRecentDeauthTime(0) {}
@@ -64,27 +63,12 @@ public:
 		int64_t mostRecentDeauthTime;
 	};
 
-	/**
-	 * Ensure that all network fields are present
-	 */
 	static void initNetwork(nlohmann::json &network);
-
-	/**
-	 * Ensure that all member fields are present
-	 */
 	static void initMember(nlohmann::json &member);
-
-	/**
-	 * Remove old and temporary network fields
-	 */
 	static void cleanNetwork(nlohmann::json &network);
-
-	/**
-	 * Remove old and temporary member fields
-	 */
 	static void cleanMember(nlohmann::json &member);
 
-	DB(EmbeddedNetworkController *const nc,const Identity &myId,const char *path);
+	DB();
 	virtual ~DB();
 
 	virtual bool waitForReady() = 0;
@@ -101,19 +85,57 @@ public:
 	bool get(const uint64_t networkId,nlohmann::json &network,const uint64_t memberId,nlohmann::json &member,NetworkSummaryInfo &info);
 	bool get(const uint64_t networkId,nlohmann::json &network,std::vector<nlohmann::json> &members);
 
-	bool summary(const uint64_t networkId,NetworkSummaryInfo &info);
+	void networks(std::set<uint64_t> &networks);
 
-	void networks(std::vector<uint64_t> &networks);
+	template<typename F>
+	inline void each(F f)
+	{
+		nlohmann::json nullJson;
+		std::lock_guard<std::mutex> lck(_networks_l);
+		for(auto nw=_networks.begin();nw!=_networks.end();++nw) {
+			f(nw->first,nw->second->config,0,nullJson); // first provide network with 0 for member ID
+			for(auto m=nw->second->members.begin();m!=nw->second->members.end();++m) {
+				f(nw->first,nw->second->config,m->first,m->second);
+			}
+		}
+	}
 
-	virtual void save(nlohmann::json *orig,nlohmann::json &record) = 0;
+	virtual bool save(nlohmann::json &record,bool notifyListeners) = 0;
 
 	virtual void eraseNetwork(const uint64_t networkId) = 0;
-
 	virtual void eraseMember(const uint64_t networkId,const uint64_t memberId) = 0;
 
 	virtual void nodeIsOnline(const uint64_t networkId,const uint64_t memberId,const InetAddress &physicalAddress) = 0;
 
+	inline void addListener(DB::ChangeListener *const listener)
+	{
+		std::lock_guard<std::mutex> l(_changeListeners_l);
+		_changeListeners.push_back(listener);
+	}
+
 protected:
+	static inline bool _compareRecords(const nlohmann::json &a,const nlohmann::json &b)
+	{
+		if (a.is_object() == b.is_object()) {
+			if (a.is_object()) {
+				if (a.size() != b.size())
+					return false;
+				auto amap = a.get<nlohmann::json::object_t>();
+				auto bmap = b.get<nlohmann::json::object_t>();
+				for(auto ai=amap.begin();ai!=amap.end();++ai) {
+					if (ai->first != "revision") { // ignore revision, compare only non-revision-counter fields
+						auto bi = bmap.find(ai->first);
+						if ((bi == bmap.end())||(bi->second != ai->second))
+							return false;
+					}
+				}
+				return true;
+			}
+			return (a == b);
+		}
+		return false;
+	}
+
 	struct _Network
 	{
 		_Network() : mostRecentDeauthTime(0) {}
@@ -126,18 +148,14 @@ protected:
 		std::mutex lock;
 	};
 
-	void _memberChanged(nlohmann::json &old,nlohmann::json &memberConfig,bool push);
-	void _networkChanged(nlohmann::json &old,nlohmann::json &networkConfig,bool push);
+	void _memberChanged(nlohmann::json &old,nlohmann::json &memberConfig,bool notifyListeners);
+	void _networkChanged(nlohmann::json &old,nlohmann::json &networkConfig,bool notifyListeners);
 	void _fillSummaryInfo(const std::shared_ptr<_Network> &nw,NetworkSummaryInfo &info);
 
-	EmbeddedNetworkController *const _controller;
-	const Identity _myId;
-	const Address _myAddress;
-	const std::string _path;
-	std::string _myAddressStr;
-
+	std::vector<DB::ChangeListener *> _changeListeners;
 	std::unordered_map< uint64_t,std::shared_ptr<_Network> > _networks;
 	std::unordered_multimap< uint64_t,uint64_t > _networkByMember;
+	mutable std::mutex _changeListeners_l;
 	mutable std::mutex _networks_l;
 };
 

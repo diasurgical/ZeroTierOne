@@ -24,22 +24,22 @@ parallel 'centos7': {
             throw err
         }
     }
-}, 'android-ndk': {
-    node('android-ndk') {
-        try {
-            checkout scm
+// }, 'android-ndk': {
+//     node('android-ndk') {
+//         try {
+//             checkout scm
 	
-            stage('Build Android NDK') { 
-                sh "/android/android-ndk-r15b/ndk-build -C $WORKSPACE/java ZT1=${WORKSPACE}"
-            }
-        }
-        catch (err) {
-            currentBuild.result = "FAILURE"
-            mattermostSend color: '#ff0000', message: "${env.JOB_NAME} broken on Android NDK (<${env.BUILD_URL}|Open>)"
+//             stage('Build Android NDK') { 
+//                 sh "/android/android-ndk-r15b/ndk-build -C $WORKSPACE/java ZT1=${WORKSPACE}"
+//             }
+//         }
+//         catch (err) {
+//             currentBuild.result = "FAILURE"
+//             mattermostSend color: '#ff0000', message: "${env.JOB_NAME} broken on Android NDK (<${env.BUILD_URL}|Open>)"
 
-            throw err
-        }
-    }
+//             throw err
+//         }
+//     }
 }, 'macOS': {
     node('macOS') {
         try {
@@ -66,8 +66,7 @@ parallel 'centos7': {
             checkout scm
             
             stage('Build Windows') {
-                bat '''CALL "C:\\Program Files (x86)\\Microsoft Visual Studio 14.0\\VC\\vcvarsall.bat" amd64
-git clean -dfx
+                bat '''CALL "C:\\Program Files (x86)\\Microsoft Visual Studio\\2017\\Community\\VC\\Auxiliary\\Build\\vcvars32.bat" x64
 msbuild windows\\ZeroTierOne.sln
 '''
             }

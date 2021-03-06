@@ -1,28 +1,15 @@
 /*
- * ZeroTier One - Network Virtualization Everywhere
- * Copyright (C) 2011-2019  ZeroTier, Inc.  https://www.zerotier.com/
+ * Copyright (c)2019 ZeroTier, Inc.
  *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * Use of this software is governed by the Business Source License included
+ * in the LICENSE.TXT file in the project's root directory.
  *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Change Date: 2023-01-01
  *
- * You should have received a copy of the GNU General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
- *
- * --
- *
- * You can be released from the requirements of the license by purchasing
- * a commercial license. Buying such a license is mandatory as soon as you
- * develop commercial closed-source software that incorporates or links
- * directly against ZeroTier software without disclosing the source code
- * of your own application.
+ * On the date above, in accordance with the Business Source License, use
+ * of this software will be governed by version 2.0 of the Apache License.
  */
+/****/
 
 #ifndef ZT_N_PACKET_HPP
 #define ZT_N_PACKET_HPP
@@ -45,31 +32,33 @@
 /**
  * Protocol version -- incremented only for major changes
  *
- * 1 - 0.2.0 ... 0.2.5
- * 2 - 0.3.0 ... 0.4.5
- *   + Added signature and originating peer to multicast frame
- *   + Double size of multicast frame bloom filter
- * 3 - 0.5.0 ... 0.6.0
- *   + Yet another multicast redesign
- *   + New crypto completely changes key agreement cipher
- * 4 - 0.6.0 ... 1.0.6
- *   + BREAKING CHANGE: New identity format based on hashcash design
- * 5 - 1.1.0 ... 1.1.5
- *   + Supports echo
- *   + Supports in-band world (root server definition) updates
- *   + Clustering! (Though this will work with protocol v4 clients.)
- *   + Otherwise backward compatible with protocol v4
- * 6 - 1.1.5 ... 1.1.10
- *   + Network configuration format revisions including binary values
- * 7 - 1.1.10 ... 1.1.17
- *   + Introduce trusted paths for local SDN use
- * 8 - 1.1.17 ... 1.2.0
- *   + Multipart network configurations for large network configs
- *   + Tags and Capabilities
- *   + Inline push of CertificateOfMembership deprecated
- * 9 - 1.2.0 ... CURRENT
+ * 1  - 0.2.0 ... 0.2.5
+ * 2  - 0.3.0 ... 0.4.5
+ *    + Added signature and originating peer to multicast frame
+ *    + Double size of multicast frame bloom filter
+ * 3  - 0.5.0 ... 0.6.0
+ *    + Yet another multicast redesign
+ *    + New crypto completely changes key agreement cipher
+ * 4  - 0.6.0 ... 1.0.6
+ *    + BREAKING CHANGE: New identity format based on hashcash design
+ * 5  - 1.1.0 ... 1.1.5
+ *    + Supports echo
+ *    + Supports in-band world (root server definition) updates
+ *    + Clustering! (Though this will work with protocol v4 clients.)
+ *    + Otherwise backward compatible with protocol v4
+ * 6  - 1.1.5 ... 1.1.10
+ *    + Network configuration format revisions including binary values
+ * 7  - 1.1.10 ... 1.1.17
+ *    + Introduce trusted paths for local SDN use
+ * 8  - 1.1.17 ... 1.2.0
+ *    + Multipart network configurations for large network configs
+ *    + Tags and Capabilities
+ *    + Inline push of CertificateOfMembership deprecated
+ * 9  - 1.2.0 ... 1.2.14
+ * 10 - 1.4.0 ... CURRENT
+ *    + Multipath capability and load balancing
  */
-#define ZT_PROTO_VERSION 9
+#define ZT_PROTO_VERSION 10
 
 /**
  * Minimum supported protocol version

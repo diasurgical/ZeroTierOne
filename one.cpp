@@ -1,28 +1,15 @@
 /*
- * ZeroTier One - Network Virtualization Everywhere
- * Copyright (C) 2011-2019  ZeroTier, Inc.  https://www.zerotier.com/
+ * Copyright (c)2019 ZeroTier, Inc.
  *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * Use of this software is governed by the Business Source License included
+ * in the LICENSE.TXT file in the project's root directory.
  *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Change Date: 2023-01-01
  *
- * You should have received a copy of the GNU General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
- *
- * --
- *
- * You can be released from the requirements of the license by purchasing
- * a commercial license. Buying such a license is mandatory as soon as you
- * develop commercial closed-source software that incorporates or links
- * directly against ZeroTier software without disclosing the source code
- * of your own application.
+ * On the date above, in accordance with the Business Source License, use
+ * of this software will be governed by version 2.0 of the Apache License.
  */
+/****/
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -69,6 +56,7 @@
 #include <stdexcept>
 #include <iostream>
 #include <sstream>
+#include <algorithm>
 
 #include "version.h"
 #include "include/ZeroTierOne.h"
@@ -95,12 +83,8 @@ using namespace ZeroTier;
 static OneService *volatile zt1Service = (OneService *)0;
 
 #define PROGRAM_NAME "ZeroTier One"
-#define COPYRIGHT_NOTICE "Copyright (c) 2011-2018 ZeroTier, Inc."
-#define LICENSE_GRANT \
-	"This is free software: you may copy, modify, and/or distribute this" ZT_EOL_S \
-	"work under the terms of the GNU General Public License, version 3 or" ZT_EOL_S \
-	"later as published by the Free Software Foundation." ZT_EOL_S \
-	"No warranty expressed or implied." ZT_EOL_S
+#define COPYRIGHT_NOTICE "Copyright (c) 2019 ZeroTier, Inc."
+#define LICENSE_GRANT "Licensed under the ZeroTier BSL 1.1 (see LICENSE.txt)"
 
 /****************************************************************************/
 /* zerotier-cli personality                                                 */
@@ -129,14 +113,21 @@ static void cliPrintHelp(const char *pn,FILE *out)
 	fprintf(out,ZT_EOL_S"Available commands:" ZT_EOL_S);
 	fprintf(out,"  info                    - Display status info" ZT_EOL_S);
 	fprintf(out,"  listpeers               - List all peers" ZT_EOL_S);
+	fprintf(out,"  peers                   - List all peers (prettier)" ZT_EOL_S);
 	fprintf(out,"  listnetworks            - List all networks" ZT_EOL_S);
-	fprintf(out,"  join <network>          - Join a network" ZT_EOL_S);
-	fprintf(out,"  leave <network>         - Leave a network" ZT_EOL_S);
-	fprintf(out,"  set <network> <setting> - Set a network setting" ZT_EOL_S);
-	fprintf(out,"  get <network> <setting> - Get a network setting" ZT_EOL_S);
+	fprintf(out,"  join <network ID>          - Join a network" ZT_EOL_S);
+	fprintf(out,"  leave <network ID>         - Leave a network" ZT_EOL_S);
+	fprintf(out,"  set <network ID> <setting> - Set a network setting" ZT_EOL_S);
+	fprintf(out,"  get <network ID> <setting> - Get a network setting" ZT_EOL_S);
 	fprintf(out,"  listmoons               - List moons (federated root sets)" ZT_EOL_S);
 	fprintf(out,"  orbit <world ID> <seed> - Join a moon via any member root" ZT_EOL_S);
 	fprintf(out,"  deorbit <world ID>      - Leave a moon" ZT_EOL_S);
+	fprintf(out,ZT_EOL_S"Available settings:" ZT_EOL_S);
+	fprintf(out,"  Settings to use with [get/set] may include property names from " ZT_EOL_S);
+	fprintf(out,"  the JSON output of \"zerotier-cli -j listnetworks\". Additionally, " ZT_EOL_S);
+	fprintf(out,"  (ip, ip4, ip6, ip6plane, and ip6prefix can be used). For instance:" ZT_EOL_S);
+	fprintf(out,"  zerotier-cli get <network ID> ip6plane will return the 6PLANE address" ZT_EOL_S);
+	fprintf(out,"  assigned to this node." ZT_EOL_S);
 }
 
 static std::string cliFixJsonCRs(const std::string &s)
@@ -409,6 +400,73 @@ static int cli(int argc,char **argv)
 			printf("%u %s %s" ZT_EOL_S,scode,command.c_str(),responseBody.c_str());
 			return 1;
 		}
+	} else if (command == "peers") {
+		const unsigned int scode = Http::GET(1024 * 1024 * 16,60000,(const struct sockaddr *)&addr,"/peer",requestHeaders,responseHeaders,responseBody);
+
+		if (scode == 0) {
+			printf("Error connecting to the ZeroTier service: %s\n\nPlease check that the service is running and that TCP port 9993 can be contacted via 127.0.0.1." ZT_EOL_S, responseBody.c_str());
+			return 1;
+		}
+
+		nlohmann::json j;
+		try {
+			j = OSUtils::jsonParse(responseBody);
+		} catch (std::exception &exc) {
+			printf("%u %s invalid JSON response (%s)" ZT_EOL_S,scode,command.c_str(),exc.what());
+			return 1;
+		} catch ( ... ) {
+			printf("%u %s invalid JSON response (unknown exception)" ZT_EOL_S,scode,command.c_str());
+			return 1;
+		}
+
+		if (scode == 200) {
+			if (json) {
+				printf("%s" ZT_EOL_S,OSUtils::jsonDump(j).c_str());
+			} else {
+				printf("200 peers\n<ztaddr>   <ver>  <role> <lat> <link> <lastTX> <lastRX> <path>" ZT_EOL_S);
+				if (j.is_array()) {
+					for(unsigned long k=0;k<j.size();++k) {
+						nlohmann::json &p = j[k];
+						std::string bestPath;
+						nlohmann::json &paths = p["paths"];
+						if (paths.is_array()) {
+							for(unsigned long i=0;i<paths.size();++i) {
+								nlohmann::json &path = paths[i];
+								if (path["preferred"]) {
+									char tmp[256];
+									std::string addr = path["address"];
+									const int64_t now = OSUtils::now();
+									OSUtils::ztsnprintf(tmp,sizeof(tmp),"%-8lld %-8lld %s",now - (int64_t)path["lastSend"],now - (int64_t)path["lastReceive"],addr.c_str());
+									bestPath = std::string("DIRECT ") + tmp;
+									break;
+								}
+							}
+						}
+						if (bestPath.length() == 0) bestPath = "RELAY";
+						char ver[128];
+						int64_t vmaj = p["versionMajor"];
+						int64_t vmin = p["versionMinor"];
+						int64_t vrev = p["versionRev"];
+						if (vmaj >= 0) {
+							OSUtils::ztsnprintf(ver,sizeof(ver),"%lld.%lld.%lld",vmaj,vmin,vrev);
+						} else {
+							ver[0] = '-';
+							ver[1] = (char)0;
+						}
+						printf("%s %-6s %-6s %5d %s" ZT_EOL_S,
+							OSUtils::jsonString(p["address"],"-").c_str(),
+							ver,
+							OSUtils::jsonString(p["role"],"-").c_str(),
+							(int)OSUtils::jsonInt(p["latency"],0),
+							bestPath.c_str());
+					}
+				}
+			}
+			return 0;
+		} else {
+			printf("%u %s %s" ZT_EOL_S,scode,command.c_str(),responseBody.c_str());
+			return 1;
+		}
 	} else if (command == "listnetworks") {
 		const unsigned int scode = Http::GET(1024 * 1024 * 16,60000,(const struct sockaddr *)&addr,"/network",requestHeaders,responseHeaders,responseBody);
 
@@ -468,7 +526,7 @@ static int cli(int argc,char **argv)
 		}
 	} else if (command == "join") {
 		if (arg1.length() != 16) {
-                        printf("invalid network id" ZT_EOL_S);
+			printf("invalid network id" ZT_EOL_S);
 			return 2;
 		}
 		requestHeaders["Content-Type"] = "application/json";
@@ -496,7 +554,7 @@ static int cli(int argc,char **argv)
 		}
 	} else if (command == "leave") {
 		if (arg1.length() != 16) {
-                        printf("invalid network id" ZT_EOL_S);
+			printf("invalid network id" ZT_EOL_S);
 			return 2;
 		}
 		unsigned int scode = Http::DEL(
@@ -594,7 +652,11 @@ static int cli(int argc,char **argv)
 		}
 	} else if (command == "set") {
 		if (arg1.length() != 16) {
-                        printf("invalid network id" ZT_EOL_S);
+			fprintf(stderr,"invalid format: must be a 16-digit (network) ID\n");
+			return 2;
+		}
+		if (!arg2.length()) {
+			fprintf(stderr,"invalid format: include a property name to set\n");
 			return 2;
 		}
 		std::size_t eqidx = arg2.find('=');
@@ -632,16 +694,18 @@ static int cli(int argc,char **argv)
 		}
 	} else if (command == "get") {
 		if (arg1.length() != 16) {
-			fprintf(stderr,"invalid network ID format, must be a 16-digit hexidecimal number\n");
+			fprintf(stderr,"invalid format: must be a 16-digit (network) ID\n");
+			return 2;
+		}
+		if (!arg2.length()) {
+			fprintf(stderr,"invalid format: include a property name to get\n");
 			return 2;
 		}
 		const unsigned int scode = Http::GET(1024 * 1024 * 16,60000,(const struct sockaddr *)&addr,"/network",requestHeaders,responseHeaders,responseBody);
-
 		if (scode == 0) {
 			printf("Error connecting to the ZeroTier service: %s\n\nPlease check that the service is running and that TCP port 9993 can be contacted via 127.0.0.1." ZT_EOL_S, responseBody.c_str());
 			return 1;
 		}
-
 		nlohmann::json j;
 		try {
 			j = OSUtils::jsonParse(responseBody);
@@ -658,8 +722,56 @@ static int cli(int argc,char **argv)
 				nlohmann::json &n = j[i];
 				if (n.is_object()) {
 					if (n["id"] == arg1) {
-						printf("%s\n", OSUtils::jsonString(n[arg2],"-").c_str());
 						bNetworkFound = true;
+						std::string aa;
+						if (arg2 != "ip" && arg2 != "ip4" && arg2 != "ip6" && arg2 != "ip6plane" && arg2 != "ip6prefix") {
+							aa.append(OSUtils::jsonString(n[arg2],"-")); // Standard network property field
+							if (aa == "-") {
+								printf("error, unknown property name\n");
+								break;
+							}
+							printf("%s\n",aa.c_str());
+							break;
+						}
+						nlohmann::json &assignedAddresses = n["assignedAddresses"];
+						if (assignedAddresses.is_array()) {
+							int matchingIdxs[ZT_MAX_ZT_ASSIGNED_ADDRESSES];
+							int addressCountOfType = 0;
+							for (int k = 0; k<std::min(ZT_MAX_ZT_ASSIGNED_ADDRESSES, (int)assignedAddresses.size());++k) {
+								nlohmann::json &addr = assignedAddresses[k];
+								if ((arg2 == "ip4" && addr.get<std::string>().find(".") != std::string::npos)
+									|| ((arg2.find("ip6") == 0) && addr.get<std::string>().find(":") != std::string::npos)
+									|| (arg2 == "ip")
+									) {
+									matchingIdxs[addressCountOfType++] = k;
+								}
+							}
+							for (int k=0; k<addressCountOfType; k++) {
+								nlohmann::json &addr = assignedAddresses[matchingIdxs[k]];
+								if (!addr.is_string()) {
+									continue;
+								}
+								if (arg2.find("ip6p") == 0) {
+									if (arg2 == "ip6plane") {
+										if (addr.get<std::string>().find("fc") == 0) {
+											aa.append(addr.get<std::string>().substr(0,addr.get<std::string>().find("/")));
+											if (k < addressCountOfType-1) aa.append("\n");
+										}
+									}
+									if (arg2 == "ip6prefix") {
+										if (addr.get<std::string>().find("fc") == 0) {
+											aa.append(addr.get<std::string>().substr(0,addr.get<std::string>().find("/")).substr(0,24));
+											if (k < addressCountOfType-1) aa.append("\n");
+										}
+									}
+								}
+								else {
+									aa.append(addr.get<std::string>().substr(0,addr.get<std::string>().find("/")));
+									if (k < addressCountOfType-1) aa.append("\n");
+								}
+							}
+						}
+						printf("%s\n",aa.c_str());
 					}
 				}
 			}

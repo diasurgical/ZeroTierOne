@@ -1,28 +1,15 @@
 /*
- * ZeroTier One - Network Virtualization Everywhere
- * Copyright (C) 2011-2019  ZeroTier, Inc.  https://www.zerotier.com/
+ * Copyright (c)2019 ZeroTier, Inc.
  *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * Use of this software is governed by the Business Source License included
+ * in the LICENSE.TXT file in the project's root directory.
  *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Change Date: 2023-01-01
  *
- * You should have received a copy of the GNU General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
- *
- * --
- *
- * You can be released from the requirements of the license by purchasing
- * a commercial license. Buying such a license is mandatory as soon as you
- * develop commercial closed-source software that incorporates or links
- * directly against ZeroTier software without disclosing the source code
- * of your own application.
+ * On the date above, in accordance with the Business Source License, use
+ * of this software will be governed by version 2.0 of the Apache License.
  */
+/****/
 
 #include <algorithm>
 
@@ -40,6 +27,7 @@ namespace ZeroTier {
 Membership::Membership() :
 	_lastUpdatedMulticast(0),
 	_comRevocationThreshold(0),
+	_lastPushedCredentials(0),
 	_revocations(4),
 	_remoteTags(4),
 	_remoteCaps(4),
@@ -47,9 +35,12 @@ Membership::Membership() :
 {
 }
 
-void Membership::pushCredentials(const RuntimeEnvironment *RR,void *tPtr,const int64_t now,const Address &peerAddress,const NetworkConfig &nconf,int localCapabilityIndex)
+void Membership::pushCredentials(const RuntimeEnvironment *RR,void *tPtr,const int64_t now,const Address &peerAddress,const NetworkConfig &nconf)
 {
-	const Capability *sendCap = (localCapabilityIndex >= 0) ? &(nconf.capabilities[localCapabilityIndex]) : (const Capability *)0;
+	const Capability *sendCaps[ZT_MAX_NETWORK_CAPABILITIES];
+	unsigned int sendCapCount = 0;
+	for(unsigned int c=0;c<nconf.capabilityCount;++c)
+		sendCaps[sendCapCount++] = &(nconf.capabilities[c]);
 
 	const Tag *sendTags[ZT_MAX_NETWORK_TAGS];
 	unsigned int sendTagCount = 0;
@@ -61,10 +52,11 @@ void Membership::pushCredentials(const RuntimeEnvironment *RR,void *tPtr,const i
 	for(unsigned int c=0;c<nconf.certificateOfOwnershipCount;++c)
 		sendCoos[sendCooCount++] = &(nconf.certificatesOfOwnership[c]);
 
+	unsigned int capPtr = 0;
 	unsigned int tagPtr = 0;
 	unsigned int cooPtr = 0;
 	bool sendCom = (bool)(nconf.com);
-	while ((tagPtr < sendTagCount)||(cooPtr < sendCooCount)||(sendCom)||(sendCap)) {
+	while ((capPtr < sendCapCount)||(tagPtr < sendTagCount)||(cooPtr < sendCooCount)||(sendCom)) {
 		Packet outp(peerAddress,RR->identity.address(),Packet::VERB_NETWORK_CREDENTIALS);
 
 		if (sendCom) {
@@ -73,11 +65,14 @@ void Membership::pushCredentials(const RuntimeEnvironment *RR,void *tPtr,const i
 		}
 		outp.append((uint8_t)0x00);
 
-		if (sendCap) {
-			outp.append((uint16_t)1);
-			sendCap->serialize(outp);
-			sendCap = (const Capability *)0;
-		} else outp.append((uint16_t)0);
+		const unsigned int capCountAt = outp.size();
+		outp.addSize(2);
+		unsigned int thisPacketCapCount = 0;
+		while ((capPtr < sendCapCount)&&((outp.size() + sizeof(Capability) + 16) < ZT_PROTO_MAX_PACKET_LENGTH)) {
+			sendCaps[capPtr++]->serialize(outp);
+			++thisPacketCapCount;
+		}
+		outp.setAt(capCountAt,(uint16_t)thisPacketCapCount);
 
 		const unsigned int tagCountAt = outp.size();
 		outp.addSize(2);
@@ -103,6 +98,8 @@ void Membership::pushCredentials(const RuntimeEnvironment *RR,void *tPtr,const i
 		outp.compress();
 		RR->sw->send(tPtr,outp,true);
 	}
+
+	_lastPushedCredentials = now;
 }
 
 Membership::AddCredentialResult Membership::addCredential(const RuntimeEnvironment *RR,void *tPtr,const NetworkConfig &nconf,const CertificateOfMembership &com)

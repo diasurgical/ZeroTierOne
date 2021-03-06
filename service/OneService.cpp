@@ -1,28 +1,15 @@
 /*
- * ZeroTier One - Network Virtualization Everywhere
- * Copyright (C) 2011-2019  ZeroTier, Inc.  https://www.zerotier.com/
+ * Copyright (c)2019 ZeroTier, Inc.
  *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * Use of this software is governed by the Business Source License included
+ * in the LICENSE.TXT file in the project's root directory.
  *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Change Date: 2023-01-01
  *
- * You should have received a copy of the GNU General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
- *
- * --
- *
- * You can be released from the requirements of the license by purchasing
- * a commercial license. Buying such a license is mandatory as soon as you
- * develop commercial closed-source software that incorporates or links
- * directly against ZeroTier software without disclosing the source code
- * of your own application.
+ * On the date above, in accordance with the Business Source License, use
+ * of this software will be governed by version 2.0 of the Apache License.
  */
+/****/
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -100,52 +87,14 @@ using json = nlohmann::json;
 
 #include "../controller/EmbeddedNetworkController.hpp"
 #include "../controller/RabbitMQ.hpp"
-
-#ifdef ZT_USE_TEST_TAP
-
-#include "../osdep/TestEthernetTap.hpp"
-namespace ZeroTier { typedef TestEthernetTap EthernetTap; }
-
-#else
-
-#ifdef ZT_SDK
-
-#include "../controller/EmbeddedNetworkController.hpp"
-#include "../node/Node.hpp"
-// Use the virtual netcon endpoint instead of a tun/tap port driver
-#include "../include/VirtualTap.hpp"
-namespace ZeroTier { typedef VirtualTap EthernetTap; }
-
-#else
-
-#ifdef __APPLE__
-#include "../osdep/MacEthernetTap.hpp"
-namespace ZeroTier { typedef MacEthernetTap EthernetTap; }
-#endif // __APPLE__
-#ifdef __LINUX__
-#include "../osdep/LinuxEthernetTap.hpp"
-namespace ZeroTier { typedef LinuxEthernetTap EthernetTap; }
-#endif // __LINUX__
+#include "../osdep/EthernetTap.hpp"
 #ifdef __WINDOWS__
 #include "../osdep/WindowsEthernetTap.hpp"
-namespace ZeroTier { typedef WindowsEthernetTap EthernetTap; }
-#endif // __WINDOWS__
-#ifdef __FreeBSD__
-#include "../osdep/BSDEthernetTap.hpp"
-namespace ZeroTier { typedef BSDEthernetTap EthernetTap; }
-#endif // __FreeBSD__
-#ifdef __NetBSD__
-#include "../osdep/NetBSDEthernetTap.hpp"
-namespace ZeroTier { typedef NetBSDEthernetTap EthernetTap; }
-#endif // __NetBSD__
-#ifdef __OpenBSD__
-#include "../osdep/BSDEthernetTap.hpp"
-namespace ZeroTier { typedef BSDEthernetTap EthernetTap; }
-#endif // __OpenBSD__
+#endif
 
-#endif // ZT_SDK
-
-#endif // ZT_USE_TEST_TAP
+#ifndef ZT_SOFTWARE_UPDATE_DEFAULT
+#define ZT_SOFTWARE_UPDATE_DEFAULT "disable"
+#endif
 
 // Sanity limits for HTTP
 #define ZT_MAX_HTTP_MESSAGE_SIZE (1024 * 1024 * 64)
@@ -189,6 +138,8 @@ size_t curlResponseWrite(void *ptr, size_t size, size_t nmemb, std::string *data
 namespace ZeroTier {
 
 namespace {
+
+static const InetAddress NULL_INET_ADDR;
 
 // Fake TLS hello for TCP tunnel outgoing connections (TUNNELED mode)
 static const char ZT_TCP_TUNNEL_HELLO[9] = { 0x17,0x03,0x03,0x00,0x04,(char)ZEROTIER_ONE_VERSION_MAJOR,(char)ZEROTIER_ONE_VERSION_MINOR,(char)((ZEROTIER_ONE_VERSION_REVISION >> 8) & 0xff),(char)(ZEROTIER_ONE_VERSION_REVISION & 0xff) };
@@ -267,6 +218,15 @@ static void _networkToJson(nlohmann::json &nj,const ZT_VirtualNetworkConfig *nc,
 		ra.push_back(rj);
 	}
 	nj["routes"] = ra;
+
+	nlohmann::json mca = nlohmann::json::array();
+	for(unsigned int i=0;i<nc->multicastSubscriptionCount;++i) {
+		nlohmann::json m;
+		m["mac"] = MAC(nc->multicastSubscriptions[i].mac).toString(tmp);
+		m["adi"] = nc->multicastSubscriptions[i].adi;
+		mca.push_back(m);
+	}
+	nj["multicastSubscriptions"] = mca;
 }
 
 static void _peerToJson(nlohmann::json &pj,const ZT_Peer *peer)
@@ -469,17 +429,12 @@ public:
 	PhySocket *_localControlSocket6;
 	bool _updateAutoApply;
 	bool _allowTcpFallbackRelay;
+	bool _allowSecondaryPort;
 	unsigned int _multipathMode;
 	unsigned int _primaryPort;
 	unsigned int _secondaryPort;
 	unsigned int _tertiaryPort;
 	volatile unsigned int _udpPortPickerCounter;
-
-	unsigned long _incomingPacketConcurrency;
-	std::vector<OneServiceIncomingPacket *> _incomingPacketMemoryPool;
-	BlockingQueue<OneServiceIncomingPacket *> _incomingPacketQueue;
-	std::vector<std::thread> _incomingPacketThreads;
-	Mutex _incomingPacketMemoryPoolLock,_incomingPacketThreadsLock;
 
 	// Local configuration and memo-ized information from it
 	json _localConfig;
@@ -533,7 +488,7 @@ public:
 			settings.allowDefault = false;
 		}
 
-		EthernetTap *tap;
+		std::shared_ptr<EthernetTap> tap;
 		ZT_VirtualNetworkConfig config; // memcpy() of raw config from core
 		std::vector<InetAddress> managedIps;
 		std::list< SharedPtr<ManagedRoute> > managedRoutes;
@@ -613,43 +568,6 @@ public:
 		_ports[1] = 0;
 		_ports[2] = 0;
 
-		_incomingPacketConcurrency = std::max((unsigned long)1,std::min((unsigned long)16,(unsigned long)std::thread::hardware_concurrency()));
-		char *envPool = std::getenv("INCOMING_PACKET_CONCURRENCY");
-		if (envPool != NULL) {
-			int tmp = atoi(envPool);
-			if (tmp > 0) {
-				_incomingPacketConcurrency = tmp;
-			}
-		}
-		for(unsigned long t=0;t<_incomingPacketConcurrency;++t) {
-			_incomingPacketThreads.push_back(std::thread([this]() {
-				OneServiceIncomingPacket *pkt = nullptr;
-				for(;;) {
-					if (!_incomingPacketQueue.get(pkt))
-						break;
-					if (!pkt)
-						break;
-					if (!_run)
-						break;
-
-					const ZT_ResultCode rc = _node->processWirePacket(nullptr,pkt->now,pkt->sock,&(pkt->from),pkt->data,pkt->size,&_nextBackgroundTaskDeadline);
-					{
-						Mutex::Lock l(_incomingPacketMemoryPoolLock);
-						_incomingPacketMemoryPool.push_back(pkt);
-					}
-					if (ZT_ResultCode_isFatal(rc)) {
-						char tmp[256];
-						OSUtils::ztsnprintf(tmp,sizeof(tmp),"fatal error code from processWirePacket: %d",(int)rc);
-						Mutex::Lock _l(_termReason_m);
-						_termReason = ONE_UNRECOVERABLE_ERROR;
-						_fatalErrorMessage = tmp;
-						this->terminate();
-						break;
-					}
-				}
-			}));
-		}
-
 #if ZT_VAULT_SUPPORT
 		curl_global_init(CURL_GLOBAL_DEFAULT);
 #endif
@@ -657,12 +575,6 @@ public:
 
 	virtual ~OneServiceImpl()
 	{
-		_incomingPacketQueue.stop();
-		_incomingPacketThreadsLock.lock();
-		for(auto t=_incomingPacketThreads.begin();t!=_incomingPacketThreads.end();++t)
-			t->join();
-		_incomingPacketThreadsLock.unlock();
-
 		_binder.closeAll(_phy);
 		_phy.close(_localControlSocket4);
 		_phy.close(_localControlSocket6);
@@ -670,13 +582,6 @@ public:
 #if ZT_VAULT_SUPPORT
 		curl_global_cleanup();
 #endif
-
-		_incomingPacketMemoryPoolLock.lock();
-		while (!_incomingPacketMemoryPool.empty()) {
-			delete _incomingPacketMemoryPool.back();
-			_incomingPacketMemoryPool.pop_back();
-		}
-		_incomingPacketMemoryPoolLock.unlock();
 
 #ifdef ZT_USE_MINIUPNPC
 		delete _portMapper;
@@ -772,49 +677,57 @@ public:
 			// This exists because there are buggy NATs out there that fail if more
 			// than one device behind the same NAT tries to use the same internal
 			// private address port number. Buggy NATs are a running theme.
-			_ports[1] = (_secondaryPort == 0) ? 20000 + ((unsigned int)_node->address() % 45500) : _secondaryPort;
-			for(int i=0;;++i) {
-				if (i > 1000) {
-					_ports[1] = 0;
-					break;
-				} else if (++_ports[1] >= 65536) {
-					_ports[1] = 20000;
+			if (_allowSecondaryPort) {
+				if (_secondaryPort) {
+					_ports[1] = _secondaryPort;
+				} else {
+					_ports[1] = 20000 + ((unsigned int)_node->address() % 45500);
+					for(int i=0;;++i) {
+						if (i > 1000) {
+							_ports[1] = 0;
+							break;
+						} else if (++_ports[1] >= 65536) {
+							_ports[1] = 20000;
+						}
+						if (_trialBind(_ports[1]))
+							break;
+					}
 				}
-				if (_trialBind(_ports[1]))
-					break;
 			}
-
 #ifdef ZT_USE_MINIUPNPC
 			if (_portMappingEnabled) {
 				// If we're running uPnP/NAT-PMP, bind a *third* port for that. We can't
 				// use the other two ports for that because some NATs do really funky
 				// stuff with ports that are explicitly mapped that breaks things.
 				if (_ports[1]) {
-					_ports[2] = (_tertiaryPort == 0) ? _ports[1] : _tertiaryPort;
-					for(int i=0;;++i) {
-						if (i > 1000) {
-							_ports[2] = 0;
-							break;
-						} else if (++_ports[2] >= 65536) {
-							_ports[2] = 20000;
+					if (_tertiaryPort) {
+						_ports[2] = _tertiaryPort;
+					} else {
+						_ports[2] = _ports[1];
+						for(int i=0;;++i) {
+							if (i > 1000) {
+								_ports[2] = 0;
+								break;
+							} else if (++_ports[2] >= 65536) {
+								_ports[2] = 20000;
+							}
+							if (_trialBind(_ports[2]))
+								break;
 						}
-						if (_trialBind(_ports[2]))
-							break;
-					}
-					if (_ports[2]) {
-						char uniqueName[64];
-						OSUtils::ztsnprintf(uniqueName,sizeof(uniqueName),"ZeroTier/%.10llx@%u",_node->address(),_ports[2]);
-						_portMapper = new PortMapper(_ports[2],uniqueName);
+						if (_ports[2]) {
+							char uniqueName[64];
+							OSUtils::ztsnprintf(uniqueName,sizeof(uniqueName),"ZeroTier/%.10llx@%u",_node->address(),_ports[2]);
+							_portMapper = new PortMapper(_ports[2],uniqueName);
+						}
 					}
 				}
 			}
 #endif
-
 			// Delete legacy iddb.d if present (cleanup)
 			OSUtils::rmDashRf((_homePath + ZT_PATH_SEPARATOR_S "iddb.d").c_str());
 
 			// Network controller is now enabled by default for desktop and server
-			_controller = new EmbeddedNetworkController(_node,_controllerDbPath.c_str(),_ports[0], _mqc);
+			_controller = new EmbeddedNetworkController(_node,_homePath.c_str(),_controllerDbPath.c_str(),_ports[0], _mqc);
 			_node->setNetconfMaster((void *)_controller);
 
 			// Join existing networks in networks.d
@@ -993,8 +906,6 @@ public:
 
 		{
 			Mutex::Lock _l(_nets_m);
-			for(std::map<uint64_t,NetworkState>::iterator n(_nets.begin());n!=_nets.end();++n)
-				delete n->second.tap;
 			_nets.clear();
 		}
 
@@ -1007,7 +918,7 @@ public:
 	}
 
 	void readLocalSettings()
-	{		
+	{
 		// Read local configuration
 		std::map<InetAddress,ZT_PhysicalPathConfiguration> ppc;
 
@@ -1041,15 +952,17 @@ public:
 		Mutex::Lock _l2(_localConfig_m);
 		std::string lcbuf;
 		if (OSUtils::readFile((_homePath + ZT_PATH_SEPARATOR_S "local.conf").c_str(),lcbuf)) {
-			try {
-				_localConfig = OSUtils::jsonParse(lcbuf);
-				if (!_localConfig.is_object()) {
-					fprintf(stderr,"ERROR: unable to parse local.conf (root element is not a JSON object)" ZT_EOL_S);
+			if (lcbuf.length() > 0) {
+				try {
+					_localConfig = OSUtils::jsonParse(lcbuf);
+					if (!_localConfig.is_object()) {
+						fprintf(stderr,"ERROR: unable to parse local.conf (root element is not a JSON object)" ZT_EOL_S);
+						exit(1);
+					}
+				} catch ( ... ) {
+					fprintf(stderr,"ERROR: unable to parse local.conf (invalid JSON)" ZT_EOL_S);
 					exit(1);
 				}
-			} catch ( ... ) {
-				fprintf(stderr,"ERROR: unable to parse local.conf (invalid JSON)" ZT_EOL_S);
-				exit(1);
 			}
 		}
 
@@ -1083,9 +996,9 @@ public:
 				fprintf(stderr, "Reading RabbitMQ Config\n");
 				_mqc = new MQConfig;
 				_mqc->port = rmq["port"];
-				_mqc->host = OSUtils::jsonString(rmq["host"], "").c_str();
-				_mqc->username = OSUtils::jsonString(rmq["username"], "").c_str();
-				_mqc->password = OSUtils::jsonString(rmq["password"], "").c_str();
+				_mqc->host = OSUtils::jsonString(rmq["host"], "");
+				_mqc->username = OSUtils::jsonString(rmq["username"], "");
+				_mqc->password = OSUtils::jsonString(rmq["password"], "");
 			}
 
 			// Bind to wildcard instead of to specific interfaces (disables full tunnel capability)
@@ -1446,8 +1359,8 @@ public:
 							if (j.is_object()) {
 								seed = Utils::hexStrToU64(OSUtils::jsonString(j["seed"],"0").c_str());
 							}
+						} catch (std::exception &exc) {
 						} catch ( ... ) {
-							// discard invalid JSON
 						}
 
 						std::vector<World> moons(_node->moons());
@@ -1496,8 +1409,8 @@ public:
 											json &allowDefault = j["allowDefault"];
 											if (allowDefault.is_boolean()) localSettings.allowDefault = (bool)allowDefault;
 										}
+									} catch (std::exception &exc) {
 									} catch ( ... ) {
-										// discard invalid JSON
 									}
 
 									setNetworkSettings(nws->networks[i].nwid,localSettings);
@@ -1653,6 +1566,7 @@ public:
 
 		_primaryPort = (unsigned int)OSUtils::jsonInt(settings["primaryPort"],(uint64_t)_primaryPort) & 0xffff;
 		_allowTcpFallbackRelay = OSUtils::jsonBool(settings["allowTcpFallbackRelay"],true);
+		_allowSecondaryPort = OSUtils::jsonBool(settings["allowSecondaryPort"],true);
 		_secondaryPort = (unsigned int)OSUtils::jsonInt(settings["secondaryPort"],0);
 		_tertiaryPort = (unsigned int)OSUtils::jsonInt(settings["tertiaryPort"],0);
 		if (_secondaryPort != 0 || _tertiaryPort != 0) {
@@ -1807,8 +1721,9 @@ public:
 				}
 			}
 #ifdef __SYNOLOGY__
-			if (!n.tap->addIpSyn(newManagedIps))
+			if (!n.tap->addIps(newManagedIps)) {
 				fprintf(stderr,"ERROR: unable to add ip addresses to ifcfg" ZT_EOL_S);
+			}
 #else
 			for(std::vector<InetAddress>::iterator ip(newManagedIps.begin());ip!=newManagedIps.end();++ip) {
 				if (std::find(n.managedIps.begin(),n.managedIps.end(),*ip) == n.managedIps.end()) {
@@ -1823,7 +1738,7 @@ public:
 		if (syncRoutes) {
 			char tapdev[64];
 #if defined(__WINDOWS__) && !defined(ZT_SDK)
-			OSUtils::ztsnprintf(tapdev,sizeof(tapdev),"%.16llx",(unsigned long long)n.tap->luid().Value);
+			OSUtils::ztsnprintf(tapdev,sizeof(tapdev),"%.16llx",(unsigned long long)((WindowsEthernetTap *)(n.tap.get()))->luid().Value);
 #else
 			Utils::scopy(tapdev,sizeof(tapdev),n.tap->deviceName().c_str());
 #endif
@@ -1855,7 +1770,7 @@ public:
 				const InetAddress *const target = reinterpret_cast<const InetAddress *>(&(n.config.routes[i].target));
 				const InetAddress *const via = reinterpret_cast<const InetAddress *>(&(n.config.routes[i].via));
 
-				InetAddress *src = NULL;
+				const InetAddress *src = NULL;
 				for (unsigned int j=0; j<n.config.assignedAddressCount; ++j) {
 					const InetAddress *const tmp = reinterpret_cast<const InetAddress *>(&(n.config.assignedAddresses[j]));
 					if (target->isV4() && tmp->isV4()) {
@@ -1866,6 +1781,8 @@ public:
 						break;
 					}
 				}
+				if (!src)
+					src = &NULL_INET_ADDR;
 
 				if ( (!checkIfManagedIsAllowed(n,*target)) || ((via->ss_family == target->ss_family)&&(matchIpOnly(myIps,*via))) )
 					continue;
@@ -1913,24 +1830,15 @@ public:
 		const uint64_t now = OSUtils::now();
 		if ((len >= 16)&&(reinterpret_cast<const InetAddress *>(from)->ipScope() == InetAddress::IP_SCOPE_GLOBAL))
 			_lastDirectReceiveFromGlobal = now;
-
-		OneServiceIncomingPacket *pkt;
-		_incomingPacketMemoryPoolLock.lock();
-		if (_incomingPacketMemoryPool.empty()) {
-			pkt = new OneServiceIncomingPacket;
-		} else {
-			pkt = _incomingPacketMemoryPool.back();
-			_incomingPacketMemoryPool.pop_back();
+		const ZT_ResultCode rc = _node->processWirePacket(nullptr,now,reinterpret_cast<int64_t>(sock),reinterpret_cast<const struct sockaddr_storage *>(from),data,len,&_nextBackgroundTaskDeadline);
+		if (ZT_ResultCode_isFatal(rc)) {
+			char tmp[256];
+			OSUtils::ztsnprintf(tmp,sizeof(tmp),"fatal error code from processWirePacket: %d",(int)rc);
+			Mutex::Lock _l(_termReason_m);
+			_termReason = ONE_UNRECOVERABLE_ERROR;
+			_fatalErrorMessage = tmp;
+			this->terminate();
 		}
-		_incomingPacketMemoryPoolLock.unlock();
-
-		pkt->now = now;
-		pkt->sock = reinterpret_cast<int64_t>(sock);
-		memcpy(&(pkt->from),from,sizeof(struct sockaddr_storage));
-		pkt->size = (unsigned int)len;
-		memcpy(pkt->data,data,len);
-
-		_incomingPacketQueue.postLimit(pkt,16 * _incomingPacketConcurrency);
 	}
 
 	inline void phyOnTcpConnect(PhySocket *sock,void **uptr,bool success)
@@ -2133,6 +2041,8 @@ public:
 					return;
 
 			}
+		} catch (std::exception &exc) {
+			_phy.close(sock);
 		} catch ( ... ) {
 			_phy.close(sock);
 		}
@@ -2184,7 +2094,8 @@ public:
 						char friendlyName[128];
 						OSUtils::ztsnprintf(friendlyName,sizeof(friendlyName),"ZeroTier One [%.16llx]",nwid);
 
-						n.tap = new EthernetTap(
+						n.tap = EthernetTap::newInstance(
+							nullptr,
 							_homePath.c_str(),
 							MAC(nwc->mac),
 							nwc->mtu,
@@ -2240,6 +2151,8 @@ public:
 #endif
 						_nets.erase(nwid);
 						return -999;
+					} catch (int exc) {
+						return -999;
 					} catch ( ... ) {
 						return -999; // tap init failed
 					}
@@ -2255,7 +2168,7 @@ public:
 					// without WindowsEthernetTap::isInitialized() returning true, the won't actually
 					// be online yet and setting managed routes on it will fail.
 					const int MAX_SLEEP_COUNT = 500;
-					for (int i = 0; !n.tap->isInitialized() && i < MAX_SLEEP_COUNT; i++) {
+					for (int i = 0; !((WindowsEthernetTap *)(n.tap.get()))->isInitialized() && i < MAX_SLEEP_COUNT; i++) {
 						Sleep(10);
 					}
 #endif
@@ -2271,10 +2184,10 @@ public:
 			case ZT_VIRTUAL_NETWORK_CONFIG_OPERATION_DESTROY:
 				if (n.tap) { // sanity check
 #if defined(__WINDOWS__) && !defined(ZT_SDK)
-					std::string winInstanceId(n.tap->instanceId());
+					std::string winInstanceId(((WindowsEthernetTap *)(n.tap.get()))->instanceId());
 #endif
 					*nuptr = (void *)0;
-					delete n.tap;
+					n.tap.reset();
 					_nets.erase(nwid);
 #if defined(__WINDOWS__) && !defined(ZT_SDK)
 					if ((op == ZT_VIRTUAL_NETWORK_CONFIG_OPERATION_DESTROY)&&(winInstanceId.length() > 0))
@@ -2445,17 +2358,22 @@ public:
 				return;
 		}
 
-		if (len >= 0) {
+		if ((len >= 0)&&(data)) {
 			// Check to see if we've already written this first. This reduces
 			// redundant writes and I/O overhead on most platforms and has
 			// little effect on others.
 			f = fopen(p,"rb");
 			if (f) {
-				char buf[65535];
-				long l = (long)fread(buf,1,sizeof(buf),f);
-				fclose(f);
-				if ((l == (long)len)&&(memcmp(data,buf,l) == 0))
-					return;
+				char *const buf = (char *)malloc(len*4);
+				if (buf) {
+					long l = (long)fread(buf,1,(size_t)(len*4),f);
+					fclose(f);
+					if ((l == (long)len)&&(memcmp(data,buf,l) == 0)) {
+						free(buf);
+						return;
+					}
+					free(buf);
+				}
 			}
 
 			f = fopen(p,"wb");

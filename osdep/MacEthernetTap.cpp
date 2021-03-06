@@ -1,28 +1,26 @@
 /*
- * ZeroTier One - Network Virtualization Everywhere
- * Copyright (C) 2011-2019  ZeroTier, Inc.  https://www.zerotier.com/
+ * Copyright (c)2019 ZeroTier, Inc.
  *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * Use of this software is governed by the Business Source License included
+ * in the LICENSE.TXT file in the project's root directory.
  *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Change Date: 2023-01-01
  *
- * You should have received a copy of the GNU General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
- *
- * --
- *
- * You can be released from the requirements of the license by purchasing
- * a commercial license. Buying such a license is mandatory as soon as you
- * develop commercial closed-source software that incorporates or links
- * directly against ZeroTier software without disclosing the source code
- * of your own application.
+ * On the date above, in accordance with the Business Source License, use
+ * of this software will be governed by version 2.0 of the Apache License.
  */
+/****/
+
+#include "../node/Constants.hpp"
+
+#ifdef __APPLE__
+
+#include "../node/Utils.hpp"
+#include "../node/Mutex.hpp"
+#include "../node/Dictionary.hpp"
+#include "OSUtils.hpp"
+#include "MacEthernetTap.hpp"
+#include "MacEthernetTapAgent.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -56,14 +54,6 @@
 #include <map>
 #include <set>
 #include <algorithm>
-
-#include "../node/Constants.hpp"
-#include "../node/Utils.hpp"
-#include "../node/Mutex.hpp"
-#include "../node/Dictionary.hpp"
-#include "OSUtils.hpp"
-#include "MacEthernetTap.hpp"
-#include "MacEthernetTapAgent.h"
 
 static const ZeroTier::MulticastGroup _blindWildcardMulticastGroup(ZeroTier::MAC(0xff),0);
 
@@ -165,6 +155,7 @@ MacEthernetTap::MacEthernetTap(
 			break;
 		}
 	}
+	_dev = devstr;
 
 	if (::pipe(_shutdownSignalPipe))
 		throw std::runtime_error("pipe creation failed");
@@ -285,7 +276,7 @@ std::vector<InetAddress> MacEthernetTap::ips() const
 	if (!getifaddrs(&ifa)) {
 		struct ifaddrs *p = ifa;
 		while (p) {
-			if ((!strcmp(p->ifa_name,_dev.c_str()))&&(p->ifa_addr)&&(p->ifa_netmask)&&(p->ifa_addr->sa_family == p->ifa_netmask->sa_family)) {
+			if ((p->ifa_name)&&(!strcmp(p->ifa_name,_dev.c_str()))&&(p->ifa_addr)) {
 				switch(p->ifa_addr->sa_family) {
 					case AF_INET: {
 						struct sockaddr_in *sin = (struct sockaddr_in *)p->ifa_addr;
@@ -361,7 +352,7 @@ void MacEthernetTap::scanMulticastGroups(std::vector<MulticastGroup> &added,std:
 		newGroups.push_back(MulticastGroup::deriveMulticastGroupForAddressResolution(*ip));
 
 	std::sort(newGroups.begin(),newGroups.end());
-	std::unique(newGroups.begin(),newGroups.end());
+	newGroups.erase(std::unique(newGroups.begin(),newGroups.end()),newGroups.end());
 
 	for(std::vector<MulticastGroup>::iterator m(newGroups.begin());m!=newGroups.end();++m) {
 		if (!std::binary_search(_multicastGroups.begin(),_multicastGroups.end(),*m))
@@ -462,3 +453,5 @@ void MacEthernetTap::threadMain()
 }
 
 } // namespace ZeroTier
+
+#endif // __APPLE__

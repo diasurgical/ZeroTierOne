@@ -1,38 +1,29 @@
 /*
- * ZeroTier One - Network Virtualization Everywhere
- * Copyright (C) 2011-2019  ZeroTier, Inc.  https://www.zerotier.com/
+ * Copyright (c)2019 ZeroTier, Inc.
  *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * Use of this software is governed by the Business Source License included
+ * in the LICENSE.TXT file in the project's root directory.
  *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Change Date: 2023-01-01
  *
- * You should have received a copy of the GNU General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
- *
- * --
- *
- * You can be released from the requirements of the license by purchasing
- * a commercial license. Buying such a license is mandatory as soon as you
- * develop commercial closed-source software that incorporates or links
- * directly against ZeroTier software without disclosing the source code
- * of your own application.
+ * On the date above, in accordance with the Business Source License, use
+ * of this software will be governed by version 2.0 of the Apache License.
  */
+/****/
+
 #ifndef ZT_CONTROLLER_RABBITMQ_HPP
 #define ZT_CONTROLLER_RABBITMQ_HPP
+
+#include "DB.hpp"
+#include <string>
 
 namespace ZeroTier
 {
 struct MQConfig {
-    const char *host;
-    int port;
-    const char *username;
-    const char *password;
+	std::string host;
+	int port;
+	std::string username;
+	std::string password;
 };
 }
 
@@ -42,33 +33,32 @@ struct MQConfig {
 
 #include <amqp.h>
 #include <amqp_tcp_socket.h>
-#include <string>
+
 
 namespace ZeroTier
 {
 
 class RabbitMQ {
 public:
-    RabbitMQ(MQConfig *cfg, const char *queueName);
-    ~RabbitMQ();
+	RabbitMQ(MQConfig *cfg, const char *queueName);
+	~RabbitMQ();
 
-    void init();
+	void init();
 
-    std::string consume();
+	std::string consume();
 
 private:
-    MQConfig *_mqc;
-    const char *_qName;
+	MQConfig *_mqc;
+	const char *_qName;
 
-    amqp_socket_t *_socket;
-    amqp_connection_state_t _conn;
-    amqp_queue_declare_ok_t *_q;
-    int _status;
+	amqp_socket_t *_socket;
+	amqp_connection_state_t _conn;
+	amqp_queue_declare_ok_t *_q;
+	int _status;
 
-    int _channel;
+	int _channel;
 
 	Mutex _chan_m;
-
 };
 
 }

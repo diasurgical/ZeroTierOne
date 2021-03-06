@@ -1,6 +1,45 @@
 ZeroTier Release Notes
 ======
 
+# 2019-08-30 -- Version 1.4.6
+
+ * Update default root list to latest
+ * ARM32 platform build and flag fixes
+ * Add a clarification line to LICENSE.txt
+ * Fix license message in CLI
+ * Windows service now looks for service command line arguments
+ * Fixed a bug that could cause excessive queued multicasts
+
+# 2019-08-23 -- Version 1.4.4
+
+ * Change license from GPL3 to BSL 1.1, see LICENSE.txt
+ * Fix an issue with the "ipauth" rule and auto-generated unforgeable IPv6 addresses
+ * Fix socket/bind errors setting IPs and routes on Linux
+
+# 2019-08-12 -- Version 1.4.2
+
+ * Fix high CPU use bug on some platforms
+ * Fix issues with PostgreSQL controller DB (only affects Central)
+ * Restore backward compatibility with MacOS versions prior to 10.13
+
+# 2019-07-29 -- Version 1.4.0
+
+### Major Changes
+
+ * Mac version no longer requires a kernel extension, instead making use of the [feth interfaces](https://apple.stackexchange.com/questions/337715/fake-ethernet-interfaces-feth-if-fake-anyone-ever-seen-this).
+ * Added support for concurrent multipath (multiple paths at once) with traffic weighting by link quality and faster recovery from lost links.
+ * Added under-the-hood support for QoS (not yet exposed) that will eventually be configurable via our rules engine.
+
+### Minor Changes and Bug Fixes
+
+ * Experimental controller DB driver for [LF](https://github.com/zerotier/lf) to store network controller data (LFDB.cpp / LFDB.hpp).
+ * Modified credential push and direct path push timings and algorithms to somewhat reduce "chattiness" of the protocol when idle. More radical background overhead reductions will have to wait for the 2.x line.
+ * Removed our beta/half-baked integration of Central with the Windows UI. We're going to do a whole new UI of some kind in the future at least for Windows and Mac.
+ * Fixed stack overflow issues on Linux versions using musl libc.
+ * Fixed some alignment problems reported on ARM and ARM64, but some reports we could not reproduce so please report any issues with exact chip, OS/distro, and ZeroTier version in use.
+ * Fixed numerous other small issues and bugs such as ARM alignment issues causing crashes on some devices.
+ * Windows now sets the adapter name such that it is consistent in both the Windows UI and command line utilities.
+
 # 2018-07-27 -- Version 1.2.12
 
  * Fixed a bug that caused exits to take a long time on Mac due to huge numbers of redundant attempts to delete managed routes.

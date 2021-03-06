@@ -1,28 +1,15 @@
 /*
- * ZeroTier One - Network Virtualization Everywhere
- * Copyright (C) 2011-2019  ZeroTier, Inc.  https://www.zerotier.com/
+ * Copyright (c)2019 ZeroTier, Inc.
  *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * Use of this software is governed by the Business Source License included
+ * in the LICENSE.TXT file in the project's root directory.
  *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Change Date: 2023-01-01
  *
- * You should have received a copy of the GNU General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
- *
- * --
- *
- * You can be released from the requirements of the license by purchasing
- * a commercial license. Buying such a license is mandatory as soon as you
- * develop commercial closed-source software that incorporates or links
- * directly against ZeroTier software without disclosing the source code
- * of your own application.
+ * On the date above, in accordance with the Business Source License, use
+ * of this software will be governed by version 2.0 of the Apache License.
  */
+/****/
 
 #include <stdio.h>
 #include <string.h>
@@ -1036,7 +1023,7 @@ int Network::setConfiguration(void *tPtr,const NetworkConfig &nconf,bool saveToD
 		_portError = RR->node->configureVirtualNetworkPort(tPtr,_id,&_uPtr,(oldPortInitialized) ? ZT_VIRTUAL_NETWORK_CONFIG_OPERATION_CONFIG_UPDATE : ZT_VIRTUAL_NETWORK_CONFIG_OPERATION_UP,&ctmp);
 
 		if (saveToDisk) {
-			Dictionary<ZT_NETWORKCONFIG_DICT_CAPACITY> *d = new Dictionary<ZT_NETWORKCONFIG_DICT_CAPACITY>();
+			Dictionary<ZT_NETWORKCONFIG_DICT_CAPACITY> *const d = new Dictionary<ZT_NETWORKCONFIG_DICT_CAPACITY>();
 			try {
 				if (nconf.toDictionary(*d,false)) {
 					uint64_t tmp[2];
@@ -1433,6 +1420,12 @@ void Network::_externalConfig(ZT_VirtualNetworkConfig *ec) const
 			memset(&(ec->routes[i]),0,sizeof(ZT_VirtualNetworkRoute));
 		}
 	}
+
+	ec->multicastSubscriptionCount = (unsigned int)_myMulticastGroups.size();
+	for(unsigned long i=0;i<(unsigned long)_myMulticastGroups.size();++i) {
+		ec->multicastSubscriptions[i].mac = _myMulticastGroups[i].mac().toInt();
+		ec->multicastSubscriptions[i].adi = _myMulticastGroups[i].adi();
+	}
 }
 
 void Network::_sendUpdatesToMembers(void *tPtr,const MulticastGroup *const newMulticastGroup)
@@ -1493,25 +1486,27 @@ void Network::_sendUpdatesToMembers(void *tPtr,const MulticastGroup *const newMu
 void Network::_announceMulticastGroupsTo(void *tPtr,const Address &peer,const std::vector<MulticastGroup> &allMulticastGroups)
 {
 	// Assumes _lock is locked
-	Packet outp(peer,RR->identity.address(),Packet::VERB_MULTICAST_LIKE);
+	Packet *const outp = new Packet(peer,RR->identity.address(),Packet::VERB_MULTICAST_LIKE);
 
 	for(std::vector<MulticastGroup>::const_iterator mg(allMulticastGroups.begin());mg!=allMulticastGroups.end();++mg) {
-		if ((outp.size() + 24) >= ZT_PROTO_MAX_PACKET_LENGTH) {
-			outp.compress();
-			RR->sw->send(tPtr,outp,true);
-			outp.reset(peer,RR->identity.address(),Packet::VERB_MULTICAST_LIKE);
+		if ((outp->size() + 24) >= ZT_PROTO_MAX_PACKET_LENGTH) {
+			outp->compress();
+			RR->sw->send(tPtr,*outp,true);
+			outp->reset(peer,RR->identity.address(),Packet::VERB_MULTICAST_LIKE);
 		}
 
 		// network ID, MAC, ADI
-		outp.append((uint64_t)_id);
-		mg->mac().appendTo(outp);
-		outp.append((uint32_t)mg->adi());
+		outp->append((uint64_t)_id);
+		mg->mac().appendTo(*outp);
+		outp->append((uint32_t)mg->adi());
 	}
 
-	if (outp.size() > ZT_PROTO_MIN_PACKET_LENGTH) {
-		outp.compress();
-		RR->sw->send(tPtr,outp,true);
+	if (outp->size() > ZT_PROTO_MIN_PACKET_LENGTH) {
+		outp->compress();
+		RR->sw->send(tPtr,*outp,true);
 	}
+
+	delete outp;
 }
 
 std::vector<MulticastGroup> Network::_allMulticastGroups() const

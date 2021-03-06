@@ -1,28 +1,15 @@
 /*
- * ZeroTier One - Network Virtualization Everywhere
- * Copyright (C) 2011-2019  ZeroTier, Inc.  https://www.zerotier.com/
+ * Copyright (c)2019 ZeroTier, Inc.
  *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * Use of this software is governed by the Business Source License included
+ * in the LICENSE.TXT file in the project's root directory.
  *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Change Date: 2023-01-01
  *
- * You should have received a copy of the GNU General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
- *
- * --
- *
- * You can be released from the requirements of the license by purchasing
- * a commercial license. Buying such a license is mandatory as soon as you
- * develop commercial closed-source software that incorporates or links
- * directly against ZeroTier software without disclosing the source code
- * of your own application.
+ * On the date above, in accordance with the Business Source License, use
+ * of this software will be governed by version 2.0 of the Apache License.
  */
+/****/
 
 #ifndef ZT_N_SWITCH_HPP
 #define ZT_N_SWITCH_HPP
@@ -43,6 +30,16 @@
 #include "SharedPtr.hpp"
 #include "IncomingPacket.hpp"
 #include "Hashtable.hpp"
+
+/* Ethernet frame types that might be relevant to us */
+#define ZT_ETHERTYPE_IPV4 0x0800
+#define ZT_ETHERTYPE_ARP 0x0806
+#define ZT_ETHERTYPE_RARP 0x8035
+#define ZT_ETHERTYPE_ATALK 0x809b
+#define ZT_ETHERTYPE_AARP 0x80f3
+#define ZT_ETHERTYPE_IPX_A 0x8137
+#define ZT_ETHERTYPE_IPX_B 0x8138
+#define ZT_ETHERTYPE_IPV6 0x86dd
 
 namespace ZeroTier {
 

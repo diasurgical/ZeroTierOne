@@ -1,28 +1,15 @@
 /*
- * ZeroTier One - Network Virtualization Everywhere
- * Copyright (C) 2011-2019  ZeroTier, Inc.  https://www.zerotier.com/
+ * Copyright (c)2019 ZeroTier, Inc.
  *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * Use of this software is governed by the Business Source License included
+ * in the LICENSE.TXT file in the project's root directory.
  *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Change Date: 2023-01-01
  *
- * You should have received a copy of the GNU General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
- *
- * --
- *
- * You can be released from the requirements of the license by purchasing
- * a commercial license. Buying such a license is mandatory as soon as you
- * develop commercial closed-source software that incorporates or links
- * directly against ZeroTier software without disclosing the source code
- * of your own application.
+ * On the date above, in accordance with the Business Source License, use
+ * of this software will be governed by version 2.0 of the Apache License.
  */
+/****/
 
 #include "../version.h"
 #include "Constants.hpp"
@@ -38,6 +25,8 @@
 #include "Utils.hpp"
 
 namespace ZeroTier {
+
+static unsigned char s_freeRandomByteCounter = 0;
 
 Peer::Peer(const RuntimeEnvironment *renv,const Identity &myIdentity,const Identity &peerIdentity) :
 	RR(renv),
@@ -55,7 +44,7 @@ Peer::Peer(const RuntimeEnvironment *renv,const Identity &myIdentity,const Ident
 	_lastACKWindowReset(0),
 	_lastQoSWindowReset(0),
 	_lastMultipathCompatibilityCheck(0),
-	_freeRandomByte(0),
+	_freeRandomByte((unsigned char)((uintptr_t)this >> 4) ^ ++s_freeRandomByteCounter),
 	_uniqueAlivePathCount(0),
 	_localMultipathSupported(false),
 	_remoteMultipathSupported(false),
@@ -73,7 +62,6 @@ Peer::Peer(const RuntimeEnvironment *renv,const Identity &myIdentity,const Ident
 	_lastAggregateStatsReport(0),
 	_lastAggregateAllocation(0)
 {
-	Utils::getSecureRandom(&_freeRandomByte, 1);
 	if (!myIdentity.agree(peerIdentity,_key,ZT_PEER_SECRET_KEY_LENGTH))
 		throw ZT_EXCEPTION_INVALID_ARGUMENT;
 }
@@ -101,7 +89,8 @@ void Peer::received(
 		case Packet::VERB_MULTICAST_FRAME:
 			_lastNontrivialReceive = now;
 			break;
-		default: break;
+		default:
+			break;
 	}
 
 	if (trustEstablished) {
@@ -157,7 +146,7 @@ void Peer::received(
 						break;
 					}
 					// If the path is the same address and port, simply assume this is a replacement
-					if ( (_paths[i].p->address().ipsEqual2(path->address()) && (_paths[i].p->address().port() == path->address().port()))) {
+					if ( (_paths[i].p->address().ipsEqual2(path->address()))) {
 						replacePath = i;
 						break;
 					}
@@ -202,39 +191,20 @@ void Peer::received(
 	}
 
 	// If we have a trust relationship periodically push a message enumerating
-	// all known external addresses for ourselves. We now do this even if we
-	// have a current path since we'll want to use new ones too.
+	// all known external addresses for ourselves. If we already have a path this
+	// is done less frequently.
 	if (this->trustEstablished(now)) {
-		const uint64_t sinceLastPush = now - _lastDirectPathPushSent;
-		if (sinceLastPush >= ZT_DIRECT_PATH_PUSH_INTERVAL) {
+		const int64_t sinceLastPush = now - _lastDirectPathPushSent;
+		if (sinceLastPush >= ((hops == 0) ? ZT_DIRECT_PATH_PUSH_INTERVAL_HAVEPATH : ZT_DIRECT_PATH_PUSH_INTERVAL)) {
 			_lastDirectPathPushSent = now;
-
-			// Start with explicitly known direct endpoint paths.
 			std::vector<InetAddress> pathsToPush(RR->node->directPaths());
-
-#if 0
-			// Do symmetric NAT prediction if we are communicating indirectly.
-			if (hops > 0) {
-				std::vector<InetAddress> sym(RR->sa->getSymmetricNatPredictions());
-				for(unsigned long i=0,added=0;i<sym.size();++i) {
-					InetAddress tmp(sym[(unsigned long)RR->node->prng() % sym.size()]);
-					if (std::find(pathsToPush.begin(),pathsToPush.end(),tmp) == pathsToPush.end()) {
-						pathsToPush.push_back(tmp);
-						if (++added >= ZT_PUSH_DIRECT_PATHS_MAX_PER_SCOPE_AND_FAMILY)
-							break;
-					}
-				}
-			}
-#endif
-
 			if (pathsToPush.size() > 0) {
 				std::vector<InetAddress>::const_iterator p(pathsToPush.begin());
 				while (p != pathsToPush.end()) {
-					Packet outp(_id.address(),RR->identity.address(),Packet::VERB_PUSH_DIRECT_PATHS);
-					outp.addSize(2); // leave room for count
-
+					Packet *const outp = new Packet(_id.address(),RR->identity.address(),Packet::VERB_PUSH_DIRECT_PATHS);
+					outp->addSize(2); // leave room for count
 					unsigned int count = 0;
-					while ((p != pathsToPush.end())&&((outp.size() + 24) < 1200)) {
+					while ((p != pathsToPush.end())&&((outp->size() + 24) < 1200)) {
 						uint8_t addressType = 4;
 						switch(p->ss_family) {
 							case AF_INET:
@@ -247,23 +217,23 @@ void Peer::received(
 								continue;
 						}
 
-						outp.append((uint8_t)0); // no flags
-						outp.append((uint16_t)0); // no extensions
-						outp.append(addressType);
-						outp.append((uint8_t)((addressType == 4) ? 6 : 18));
-						outp.append(p->rawIpData(),((addressType == 4) ? 4 : 16));
-						outp.append((uint16_t)p->port());
+						outp->append((uint8_t)0); // no flags
+						outp->append((uint16_t)0); // no extensions
+						outp->append(addressType);
+						outp->append((uint8_t)((addressType == 4) ? 6 : 18));
+						outp->append(p->rawIpData(),((addressType == 4) ? 4 : 16));
+						outp->append((uint16_t)p->port());
 
 						++count;
 						++p;
 					}
-
 					if (count) {
-						outp.setAt(ZT_PACKET_IDX_PAYLOAD,(uint16_t)count);
-						outp.compress();
-						outp.armor(_key,true);
-						path->send(RR,tPtr,outp.data(),outp.size(),now);
+						outp->setAt(ZT_PACKET_IDX_PAYLOAD,(uint16_t)count);
+						outp->compress();
+						outp->armor(_key,true);
+						path->send(RR,tPtr,outp->data(),outp->size(),now);
 					}
+					delete outp;
 				}
 			}
 		}
@@ -273,8 +243,7 @@ void Peer::received(
 void Peer::recordOutgoingPacket(const SharedPtr<Path> &path, const uint64_t packetId,
 	uint16_t payloadLength, const Packet::Verb verb, int64_t now)
 {
-	// Grab second byte from packetId to use as a source of entropy in the next path selection
-	_freeRandomByte = (packetId & 0xFF00) >> 8;
+	_freeRandomByte += (unsigned char)(packetId >> 8); // grab entropy to use in path selection logic for multipath
 	if (_canUseMultipath) {
 		path->recordOutgoingPacket(now, packetId, payloadLength, verb);
 	}
@@ -305,7 +274,7 @@ void Peer::computeAggregateProportionalAllocation(int64_t now)
 	for(unsigned int i=0;i<ZT_MAX_PEER_NETWORK_PATHS;++i) {
 		if (_paths[i].p) {
 			relStability[i] = _paths[i].p->lastComputedStability();
-			relThroughput[i] = _paths[i].p->maxLifetimeThroughput();
+			relThroughput[i] = (float)_paths[i].p->maxLifetimeThroughput();
 			maxStability = relStability[i] > maxStability ? relStability[i] : maxStability;
 			maxThroughput = relThroughput[i] > maxThroughput ? relThroughput[i] : maxThroughput;
 			maxScope = _paths[i].p->ipScope() > maxScope ? _paths[i].p->ipScope() : maxScope;
@@ -316,17 +285,17 @@ void Peer::computeAggregateProportionalAllocation(int64_t now)
 		if (_paths[i].p) {
 			relStability[i] /= maxStability ? maxStability : 1;
 			relThroughput[i] /= maxThroughput ? maxThroughput : 1;
-			float normalized_ma = Utils::normalize(_paths[i].p->ackAge(now), 0, ZT_PATH_MAX_AGE, 0, 10);
+			float normalized_ma = Utils::normalize((float)_paths[i].p->ackAge(now), 0, ZT_PATH_MAX_AGE, 0, 10);
 			float age_contrib = exp((-1)*normalized_ma);
 			float relScope = ((float)(_paths[i].p->ipScope()+1) / (maxScope + 1));
 			float relQuality =
-				(relStability[i] * ZT_PATH_CONTRIB_STABILITY)
-				+ (fmax(1, relThroughput[i]) * ZT_PATH_CONTRIB_THROUGHPUT)
-				+ relScope * ZT_PATH_CONTRIB_SCOPE;
+				(relStability[i] * (float)ZT_PATH_CONTRIB_STABILITY)
+				+ (fmaxf(1.0f, relThroughput[i]) * (float)ZT_PATH_CONTRIB_THROUGHPUT)
+				+ relScope * (float)ZT_PATH_CONTRIB_SCOPE;
 			relQuality *= age_contrib;
 			// Arbitrary cutoffs
-			relQuality = relQuality > (1.00 / 100.0) ? relQuality : 0.0;
-			relQuality = relQuality < (99.0 / 100.0) ? relQuality : 1.0;
+			relQuality = relQuality > (1.00f / 100.0f) ? relQuality : 0.0f;
+			relQuality = relQuality < (99.0f / 100.0f) ? relQuality : 1.0f;
 			totalRelativeQuality += relQuality;
 			_paths[i].p->updateRelativeQuality(relQuality);
 		}
@@ -334,7 +303,7 @@ void Peer::computeAggregateProportionalAllocation(int64_t now)
 	// Convert set of relative performances into an allocation set
 	for(uint16_t i=0;i<ZT_MAX_PEER_NETWORK_PATHS;++i) {
 		if (_paths[i].p) {
-			_paths[i].p->updateComponentAllocationOfAggregateLink((_paths[i].p->relativeQuality() / totalRelativeQuality) * 255);
+			_paths[i].p->updateComponentAllocationOfAggregateLink((unsigned char)((_paths[i].p->relativeQuality() / totalRelativeQuality) * 255));
 		}
 	}
 }
@@ -347,7 +316,7 @@ int Peer::computeAggregateLinkPacketDelayVariance()
 			pdv += _paths[i].p->relativeQuality() * _paths[i].p->packetDelayVariance();
 		}
 	}
-	return pdv;
+	return (int)pdv;
 }
 
 int Peer::computeAggregateLinkMeanLatency()
@@ -357,7 +326,7 @@ int Peer::computeAggregateLinkMeanLatency()
 	for(unsigned int i=0;i<ZT_MAX_PEER_NETWORK_PATHS;++i) {
 		if (_paths[i].p) {
 			pathCount++;
-			ml += _paths[i].p->relativeQuality() * _paths[i].p->meanLatency();
+			ml += (int)(_paths[i].p->relativeQuality() * _paths[i].p->meanLatency());
 		}
 	}
 	return ml / pathCount;
@@ -499,8 +468,8 @@ char *Peer::interfaceListStr()
 		if (_paths[i].p && _paths[i].p->alive(now)) {
 			int ipv = _paths[i].p->address().isV4();
 			// If this is acting as an aggregate link, check allocations
-			float targetAllocation = 1.0 / alivePathCount;
-			float currentAllocation = 1.0;
+			float targetAllocation = 1.0f / (float)alivePathCount;
+			float currentAllocation = 1.0f;
 			if (alivePathCount > 1) {
 				currentAllocation = (float)_pathChoiceHist.countValue(i) / (float)_pathChoiceHist.count();
 				if (fabs(targetAllocation - currentAllocation) > ZT_PATH_IMBALANCE_THRESHOLD) {
@@ -650,10 +619,11 @@ void Peer::introduce(void *const tPtr,const int64_t now,const SharedPtr<Peer> &o
 	}
 }
 
-inline void Peer::processBackgroundPeerTasks(int64_t now)
+inline void Peer::processBackgroundPeerTasks(const int64_t now)
 {
 	// Determine current multipath compatibility with other peer
 	if ((now - _lastMultipathCompatibilityCheck) >= ZT_PATH_QUALITY_COMPUTE_INTERVAL) {
+		//
 		// Cache number of available paths so that we can short-circuit multipath logic elsewhere
 		//
 		// We also take notice of duplicate paths (same IP only) because we may have
@@ -663,6 +633,7 @@ inline void Peer::processBackgroundPeerTasks(int64_t now)
 		//
 		// This is done to support the behavior of auto multipath enable/disable
 		// without user intervention.
+		//
 		int currAlivePathCount = 0;
 		int duplicatePathsFound = 0;
 		for (unsigned int i=0;i<ZT_MAX_PEER_NETWORK_PATHS;++i) {

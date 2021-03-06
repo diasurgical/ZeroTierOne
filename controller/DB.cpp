@@ -1,28 +1,15 @@
 /*
- * ZeroTier One - Network Virtualization Everywhere
- * Copyright (C) 2011-2019  ZeroTier, Inc.  https://www.zerotier.com/
+ * Copyright (c)2019 ZeroTier, Inc.
  *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * Use of this software is governed by the Business Source License included
+ * in the LICENSE.TXT file in the project's root directory.
  *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Change Date: 2023-01-01
  *
- * You should have received a copy of the GNU General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
- *
- * --
- *
- * You can be released from the requirements of the license by purchasing
- * a commercial license. Buying such a license is mandatory as soon as you
- * develop commercial closed-source software that incorporates or links
- * directly against ZeroTier software without disclosing the source code
- * of your own application.
+ * On the date above, in accordance with the Business Source License, use
+ * of this software will be governed by version 2.0 of the Apache License.
  */
+/****/
 
 #include "DB.hpp"
 #include "EmbeddedNetworkController.hpp"
@@ -52,6 +39,7 @@ void DB::initNetwork(nlohmann::json &network)
 	if (!network.count("mtu")) network["mtu"] = ZT_DEFAULT_MTU;
 	if (!network.count("remoteTraceTarget")) network["remoteTraceTarget"] = nlohmann::json();
 	if (!network.count("removeTraceLevel")) network["remoteTraceLevel"] = 0;
+	if (!network.count("rulesSource")) network["rulesSource"] = "";
 	if (!network.count("rules")) {
 		// If unspecified, rules are set to allow anything and behave like a flat L2 segment
 		network["rules"] = {{
@@ -104,20 +92,8 @@ void DB::cleanMember(nlohmann::json &member)
 	member.erase("lastRequestMetaData");
 }
 
-DB::DB(EmbeddedNetworkController *const nc,const Identity &myId,const char *path) :
-	_controller(nc),
-	_myId(myId),
-	_myAddress(myId.address()),
-	_path((path) ? path : "")
-{
-	char tmp[32];
-	_myAddress.toString(tmp);
-	_myAddressStr = tmp;
-}
-
-DB::~DB()
-{
-}
+DB::DB() {}
+DB::~DB() {}
 
 bool DB::get(const uint64_t networkId,nlohmann::json &network)
 {
@@ -202,34 +178,15 @@ bool DB::get(const uint64_t networkId,nlohmann::json &network,std::vector<nlohma
 	return true;
 }
 
-bool DB::summary(const uint64_t networkId,NetworkSummaryInfo &info)
-{
-	waitForReady();
-	std::shared_ptr<_Network> nw;
-	{
-		std::lock_guard<std::mutex> l(_networks_l);
-		auto nwi = _networks.find(networkId);
-		if (nwi == _networks.end())
-			return false;
-		nw = nwi->second;
-	}
-	{
-		std::lock_guard<std::mutex> l2(nw->lock);
-		_fillSummaryInfo(nw,info);
-	}
-	return true;
-}
-
-void DB::networks(std::vector<uint64_t> &networks)
+void DB::networks(std::set<uint64_t> &networks)
 {
 	waitForReady();
 	std::lock_guard<std::mutex> l(_networks_l);
-	networks.reserve(_networks.size() + 1);
 	for(auto n=_networks.begin();n!=_networks.end();++n)
-		networks.push_back(n->first);
+		networks.insert(n->first);
 }
 
-void DB::_memberChanged(nlohmann::json &old,nlohmann::json &memberConfig,bool push)
+void DB::_memberChanged(nlohmann::json &old,nlohmann::json &memberConfig,bool notifyListeners)
 {
 	uint64_t memberId = 0;
 	uint64_t networkId = 0;
@@ -313,8 +270,12 @@ void DB::_memberChanged(nlohmann::json &old,nlohmann::json &memberConfig,bool pu
 			}
 		}
 
-		if (push)
-			_controller->onNetworkMemberUpdate(networkId,memberId);
+		if (notifyListeners) {
+			std::lock_guard<std::mutex> ll(_changeListeners_l);
+			for(auto i=_changeListeners.begin();i!=_changeListeners.end();++i) {
+				(*i)->onNetworkMemberUpdate(this,networkId,memberId,memberConfig);
+			}
+		}
 	} else if (memberId) {
 		if (nw) {
 			std::lock_guard<std::mutex> l(nw->lock);
@@ -332,20 +293,24 @@ void DB::_memberChanged(nlohmann::json &old,nlohmann::json &memberConfig,bool pu
 		}
 	}
 
-	if ((push)&&((wasAuth)&&(!isAuth)&&(networkId)&&(memberId)))
-		_controller->onNetworkMemberDeauthorize(networkId,memberId);
+	if ((notifyListeners)&&((wasAuth)&&(!isAuth)&&(networkId)&&(memberId))) {
+		std::lock_guard<std::mutex> ll(_changeListeners_l);
+		for(auto i=_changeListeners.begin();i!=_changeListeners.end();++i) {
+			(*i)->onNetworkMemberDeauthorize(this,networkId,memberId);
+		}
+	}
 }
 
-void DB::_networkChanged(nlohmann::json &old,nlohmann::json &networkConfig,bool push)
+void DB::_networkChanged(nlohmann::json &old,nlohmann::json &networkConfig,bool notifyListeners)
 {
 	if (networkConfig.is_object()) {
 		const std::string ids = networkConfig["id"];
-		const uint64_t id = Utils::hexStrToU64(ids.c_str());
-		if (id) {
+		const uint64_t networkId = Utils::hexStrToU64(ids.c_str());
+		if (networkId) {
 			std::shared_ptr<_Network> nw;
 			{
 				std::lock_guard<std::mutex> l(_networks_l);
-				std::shared_ptr<_Network> &nw2 = _networks[id];
+				std::shared_ptr<_Network> &nw2 = _networks[networkId];
 				if (!nw2)
 					nw2.reset(new _Network);
 				nw = nw2;
@@ -354,15 +319,19 @@ void DB::_networkChanged(nlohmann::json &old,nlohmann::json &networkConfig,bool 
 				std::lock_guard<std::mutex> l2(nw->lock);
 				nw->config = networkConfig;
 			}
-			if (push)
-				_controller->onNetworkUpdate(id);
+			if (notifyListeners) {
+				std::lock_guard<std::mutex> ll(_changeListeners_l);
+				for(auto i=_changeListeners.begin();i!=_changeListeners.end();++i) {
+					(*i)->onNetworkUpdate(this,networkId,networkConfig);
+				}
+			}
 		}
 	} else if (old.is_object()) {
 		const std::string ids = old["id"];
-		const uint64_t id = Utils::hexStrToU64(ids.c_str());
-		if (id) {
+		const uint64_t networkId = Utils::hexStrToU64(ids.c_str());
+		if (networkId) {
 			std::lock_guard<std::mutex> l(_networks_l);
-			_networks.erase(id);
+			_networks.erase(networkId);
 		}
 	}
 }

@@ -1,28 +1,15 @@
 /*
- * ZeroTier One - Network Virtualization Everywhere
- * Copyright (C) 2011-2019  ZeroTier, Inc.  https://www.zerotier.com/
+ * Copyright (c)2019 ZeroTier, Inc.
  *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * Use of this software is governed by the Business Source License included
+ * in the LICENSE.TXT file in the project's root directory.
  *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Change Date: 2023-01-01
  *
- * You should have received a copy of the GNU General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
- *
- * --
- *
- * You can be released from the requirements of the license by purchasing
- * a commercial license. Buying such a license is mandatory as soon as you
- * develop commercial closed-source software that incorporates or links
- * directly against ZeroTier software without disclosing the source code
- * of your own application.
+ * On the date above, in accordance with the Business Source License, use
+ * of this software will be governed by version 2.0 of the Apache License.
  */
+/****/
 
 #include <stdio.h>
 #include <string.h>
@@ -57,7 +44,6 @@ InetAddress::IpScope InetAddress::ipScope() const
 				case 0x1c: return IP_SCOPE_PSEUDOPRIVATE;                          // 28.0.0.0/8 (US DSI-North)
 				case 0x1d: return IP_SCOPE_PSEUDOPRIVATE;                          // 29.0.0.0/8 (US DISA)
 				case 0x1e: return IP_SCOPE_PSEUDOPRIVATE;                          // 30.0.0.0/8 (US DISA)
-				case 0x2c: return IP_SCOPE_PSEUDOPRIVATE;                          // 44.0.0.0/8 (Amateur Radio)
 				case 0x33: return IP_SCOPE_PSEUDOPRIVATE;                          // 51.0.0.0/8 (UK Department of Social Security)
 				case 0x37: return IP_SCOPE_PSEUDOPRIVATE;                          // 55.0.0.0/8 (US DoD)
 				case 0x38: return IP_SCOPE_PSEUDOPRIVATE;                          // 56.0.0.0/8 (US Postal Service)
@@ -185,15 +171,12 @@ bool InetAddress::fromString(const char *ipSlashPort)
 		inet_pton(AF_INET6, buf, &in6->sin6_addr.s6_addr);
 		in6->sin6_family = AF_INET6;
 		in6->sin6_port = Utils::hton((uint16_t)port);
-
-
 		return true;
 	} else if (strchr(buf,'.')) {
 		struct sockaddr_in *const in = reinterpret_cast<struct sockaddr_in *>(this);
 		inet_pton(AF_INET, buf, &in->sin_addr.s_addr);
 		in->sin_family = AF_INET;
 		in->sin_port = Utils::hton((uint16_t)port);
-
 		return true;
 	} else {
 		return false;

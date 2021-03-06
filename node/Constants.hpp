@@ -1,28 +1,15 @@
 /*
- * ZeroTier One - Network Virtualization Everywhere
- * Copyright (C) 2011-2019  ZeroTier, Inc.  https://www.zerotier.com/
+ * Copyright (c)2019 ZeroTier, Inc.
  *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * Use of this software is governed by the Business Source License included
+ * in the LICENSE.TXT file in the project's root directory.
  *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Change Date: 2023-01-01
  *
- * You should have received a copy of the GNU General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
- *
- * --
- *
- * You can be released from the requirements of the license by purchasing
- * a commercial license. Buying such a license is mandatory as soon as you
- * develop commercial closed-source software that incorporates or links
- * directly against ZeroTier software without disclosing the source code
- * of your own application.
+ * On the date above, in accordance with the Business Source License, use
+ * of this software will be governed by version 2.0 of the Apache License.
  */
+/****/
 
 #ifndef ZT_CONSTANTS_HPP
 #define ZT_CONSTANTS_HPP
@@ -72,14 +59,6 @@
 #include <machine/endian.h>
 #endif
 
-// Defined this macro to disable "type punning" on a number of targets that
-// have issues with unaligned memory access.
-#if defined(__arm__) || defined(__ARMEL__) || (defined(__APPLE__) && ( (defined(TARGET_OS_IPHONE) && (TARGET_OS_IPHONE != 0)) || (defined(TARGET_OS_WATCH) && (TARGET_OS_WATCH != 0)) || (defined(TARGET_IPHONE_SIMULATOR) && (TARGET_IPHONE_SIMULATOR != 0)) ) )
-#ifndef ZT_NO_TYPE_PUNNING
-#define ZT_NO_TYPE_PUNNING
-#endif
-#endif
-
 #if defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
 #ifndef __UNIX_LIKE__
 #define __UNIX_LIKE__
@@ -107,11 +86,21 @@
 #pragma warning(disable : 4101)
 #undef __UNIX_LIKE__
 #undef __BSD__
-#define ZT_PATH_SEPARATOR '\\'
-#define ZT_PATH_SEPARATOR_S "\\"
-#define ZT_EOL_S "\r\n"
 #include <WinSock2.h>
 #include <Windows.h>
+#endif
+
+#ifdef __NetBSD__
+#ifndef RTF_MULTICAST
+#define RTF_MULTICAST   0x20000000
+#endif
+#endif
+
+// Define ZT_NO_TYPE_PUNNING to disable reckless casts on anything other than x86/x64.
+#if (!(defined(__amd64__) || defined(__amd64) || defined(__x86_64__) || defined(__x86_64) || defined(_M_AMD64) || defined(_M_X64) || defined(i386) || defined(__i386) || defined(__i386__) || defined(__i486__) || defined(__i586__) || defined(__i686__) || defined(_M_IX86) || defined(__X86__) || defined(_X86_) || defined(__I86__) || defined(__INTEL__) || defined(__386)))
+#ifndef ZT_NO_TYPE_PUNNING
+#define ZT_NO_TYPE_PUNNING
+#endif
 #endif
 
 // Assume little endian if not defined
@@ -124,7 +113,11 @@
 #define __BYTE_ORDER 1234
 #endif
 
-#ifdef __UNIX_LIKE__
+#ifdef __WINDOWS__
+#define ZT_PATH_SEPARATOR '\\'
+#define ZT_PATH_SEPARATOR_S "\\"
+#define ZT_EOL_S "\r\n"
+#else
 #define ZT_PATH_SEPARATOR '/'
 #define ZT_PATH_SEPARATOR_S "/"
 #define ZT_EOL_S "\n"
@@ -132,10 +125,6 @@
 
 #ifndef __BYTE_ORDER
 #include <endian.h>
-#endif
-
-#ifdef __NetBSD__
-#define RTF_MULTICAST   0x20000000
 #endif
 
 #if (defined(__GNUC__) && (__GNUC__ >= 3)) || (defined(__INTEL_COMPILER) && (__INTEL_COMPILER >= 800)) || defined(__clang__)
@@ -226,11 +215,6 @@
 #define ZT_RECEIVE_QUEUE_TIMEOUT 5000
 
 /**
- * Maximum latency to allow for OK(HELLO) before packet is discarded
- */
-#define ZT_HELLO_MAX_ALLOWABLE_LATENCY 120000
-
-/**
  * Maximum number of ZT hops allowed (this is not IP hops/TTL)
  *
  * The protocol allows up to 7, but we limit it to something smaller.
@@ -265,7 +249,7 @@
 #define ZT_PING_CHECK_INVERVAL 5000
 
 /**
- * How often the local.conf file is checked for changes
+ * How often the local.conf file is checked for changes (service, should be moved there)
  */
 #define ZT_LOCAL_CONF_FILE_CHECK_INTERVAL 10000
 
@@ -464,8 +448,11 @@
 
 /**
  * Delay between full-fledge pings of directly connected peers.
+ *
  * With multipath bonding enabled ping peers more often to measure
- * packet loss and latency.
+ * packet loss and latency. This uses more bandwidth so is disabled
+ * by default to avoid increasing idle bandwidth use for regular
+ * links.
  */
 #define ZT_MULTIPATH_PEER_PING_PERIOD 5000
 
@@ -482,7 +469,11 @@
 /**
  * Timeout for overall peer activity (measured from last receive)
  */
+#ifndef ZT_SDK
 #define ZT_PEER_ACTIVITY_TIMEOUT 500000
+#else
+#define ZT_PEER_ACTIVITY_TIMEOUT 30000
+#endif
 
 /**
  * General rate limit timeout for multiple packet types (HELLO, etc.)
@@ -528,14 +519,19 @@
 #define ZT_MAX_BRIDGE_ROUTES 67108864
 
 /**
- * If there is no known route, spam to up to this many active bridges
+ * If there is no known L2 bridging route, spam to up to this many active bridges
  */
 #define ZT_MAX_BRIDGE_SPAM 32
 
 /**
  * Interval between direct path pushes in milliseconds
  */
-#define ZT_DIRECT_PATH_PUSH_INTERVAL 120000
+#define ZT_DIRECT_PATH_PUSH_INTERVAL 15000
+
+/**
+ * Interval between direct path pushes in milliseconds if we already have a path
+ */
+#define ZT_DIRECT_PATH_PUSH_INTERVAL_HAVEPATH 120000
 
 /**
  * Time horizon for push direct paths cutoff
@@ -620,16 +616,7 @@
  */
 #define ZT_THREAD_MIN_STACK_SIZE 1048576
 
-/* Ethernet frame types that might be relevant to us */
-#define ZT_ETHERTYPE_IPV4 0x0800
-#define ZT_ETHERTYPE_ARP 0x0806
-#define ZT_ETHERTYPE_RARP 0x8035
-#define ZT_ETHERTYPE_ATALK 0x809b
-#define ZT_ETHERTYPE_AARP 0x80f3
-#define ZT_ETHERTYPE_IPX_A 0x8137
-#define ZT_ETHERTYPE_IPX_B 0x8138
-#define ZT_ETHERTYPE_IPV6 0x86dd
-
+// Exceptions thrown in core ZT code
 #define ZT_EXCEPTION_OUT_OF_BOUNDS 100
 #define ZT_EXCEPTION_OUT_OF_MEMORY 101
 #define ZT_EXCEPTION_PRIVATE_KEY_REQUIRED 102

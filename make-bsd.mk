@@ -13,7 +13,7 @@ ifeq ($(ZT_SANITIZE),1)
 endif
 # "make debug" is a shortcut for this
 ifeq ($(ZT_DEBUG),1)
-	CFLAGS+=-Wall -Werror -g -pthread $(INCLUDES) $(DEFS)
+	CFLAGS+=-Wall -g -pthread $(INCLUDES) $(DEFS)
 	LDFLAGS+=
 	STRIP=echo
 	ZT_TRACE=1
@@ -128,7 +128,7 @@ endif
 
 override DEFS+=-DZT_BUILD_PLATFORM=$(ZT_BUILD_PLATFORM) -DZT_BUILD_ARCHITECTURE=$(ZT_ARCHITECTURE) -DZT_SOFTWARE_UPDATE_DEFAULT="\"disable\""
 
-CXXFLAGS+=$(CFLAGS) -fno-rtti -std=c++11 #-D_GLIBCXX_USE_C99 -D_GLIBCXX_USE_C99_MATH -D_GLIBCXX_USE_C99_MATH_TR1
+CXXFLAGS+=$(CFLAGS) -std=c++11 #-D_GLIBCXX_USE_C99 -D_GLIBCXX_USE_C99_MATH -D_GLIBCXX_USE_C99_MATH_TR1
 
 all:	one
 

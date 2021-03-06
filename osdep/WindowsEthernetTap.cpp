@@ -1,28 +1,15 @@
 /*
- * ZeroTier One - Network Virtualization Everywhere
- * Copyright (C) 2011-2019  ZeroTier, Inc.  https://www.zerotier.com/
+ * Copyright (c)2019 ZeroTier, Inc.
  *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * Use of this software is governed by the Business Source License included
+ * in the LICENSE.TXT file in the project's root directory.
  *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Change Date: 2023-01-01
  *
- * You should have received a copy of the GNU General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
- *
- * --
- *
- * You can be released from the requirements of the license by purchasing
- * a commercial license. Buying such a license is mandatory as soon as you
- * develop commercial closed-source software that incorporates or links
- * directly against ZeroTier software without disclosing the source code
- * of your own application.
+ * On the date above, in accordance with the Business Source License, use
+ * of this software will be governed by version 2.0 of the Apache License.
  */
+/****/
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -57,6 +44,8 @@
 #include "OSUtils.hpp"
 
 #include "..\windows\TapDriver6\tap-windows.h"
+
+#include <netcon.h>
 
 // Create a fake unused default route to force detection of network type on networks without gateways
 #define ZT_WINDOWS_CREATE_FAKE_DEFAULT_ROUTE
@@ -824,6 +813,61 @@ void WindowsEthernetTap::setFriendlyName(const char *dn)
 		RegSetKeyValueA(ifp,"Connection","Name",REG_SZ,(LPCVOID)dn,(DWORD)(strlen(dn)+1));
 		RegCloseKey(ifp);
 	}
+
+	HRESULT hr = CoInitialize(nullptr);
+	if (hr != S_OK) return;
+	CoInitializeSecurity(NULL, -1, NULL, NULL,
+		RPC_C_AUTHN_LEVEL_PKT,
+		RPC_C_IMP_LEVEL_IMPERSONATE,
+		NULL, EOAC_NONE, NULL);
+	if (hr != S_OK) return;
+
+	INetSharingManager *nsm;
+	hr = CoCreateInstance(__uuidof(NetSharingManager), NULL, CLSCTX_ALL, __uuidof(INetSharingManager), (void**)&nsm);
+	if (hr != S_OK)	return;
+
+	bool found = false;
+	INetSharingEveryConnectionCollection *nsecc = nullptr;
+	hr = nsm->get_EnumEveryConnection(&nsecc);
+	if (!nsecc) {
+		fprintf(stderr, "Failed to get NSM connections");
+		return;
+	}
+
+	IEnumVARIANT *ev = nullptr;
+	IUnknown *unk = nullptr;
+	hr = nsecc->get__NewEnum(&unk);
+	if (unk) {
+		hr = unk->QueryInterface(__uuidof(IEnumVARIANT), (void**)&ev);
+		unk->Release();
+	}
+	if (ev) {
+		VARIANT v;
+		VariantInit(&v);
+
+		while ((S_OK == ev->Next(1, &v, NULL)) && found == FALSE) {
+			if (V_VT(&v) == VT_UNKNOWN) {
+				INetConnection *nc = nullptr;
+				V_UNKNOWN(&v)->QueryInterface(__uuidof(INetConnection), (void**)&nc);
+				if (nc) {
+					NETCON_PROPERTIES *ncp = nullptr;
+					nc->GetProperties(&ncp);
+
+					GUID curId = ncp->guidId;
+					if (curId == _deviceGuid) {
+						wchar_t wtext[255];
+						mbstowcs(wtext, dn, strlen(dn)+1);
+						nc->Rename(wtext);
+						found = true;
+					}
+					nc->Release();
+				}
+			}
+			VariantClear(&v);
+		}
+		ev->Release();
+	}
+	nsecc->Release();
 }
 
 void WindowsEthernetTap::scanMulticastGroups(std::vector<MulticastGroup> &added,std::vector<MulticastGroup> &removed)

@@ -1,28 +1,15 @@
 /*
- * ZeroTier One - Network Virtualization Everywhere
- * Copyright (C) 2011-2019  ZeroTier, Inc.  https://www.zerotier.com/
+ * Copyright (c)2019 ZeroTier, Inc.
  *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * Use of this software is governed by the Business Source License included
+ * in the LICENSE.TXT file in the project's root directory.
  *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Change Date: 2023-01-01
  *
- * You should have received a copy of the GNU General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
- *
- * --
- *
- * You can be released from the requirements of the license by purchasing
- * a commercial license. Buying such a license is mandatory as soon as you
- * develop commercial closed-source software that incorporates or links
- * directly against ZeroTier software without disclosing the source code
- * of your own application.
+ * On the date above, in accordance with the Business Source License, use
+ * of this software will be governed by version 2.0 of the Apache License.
  */
+/****/
 
 #ifndef ZT_PATH_HPP
 #define ZT_PATH_HPP
@@ -158,7 +145,9 @@ public:
 	{
 		memset(_ifname, 0, 16);
 		memset(_addrString, 0, sizeof(_addrString));
-		_phy->getIfName((PhySocket *)((uintptr_t)_localSocket), _ifname, 16);
+		if (_localSocket != -1) {
+			_phy->getIfName((PhySocket *) ((uintptr_t) _localSocket), _ifname, 16);
+		}
 	}
 
 	/**
@@ -351,7 +340,7 @@ public:
 		_unackedBytes = (ackedBytes > _unackedBytes) ? 0 : _unackedBytes - ackedBytes;
 		int64_t timeSinceThroughputEstimate = (now - _lastThroughputEstimation);
 		if (timeSinceThroughputEstimate >= ZT_PATH_THROUGHPUT_MEASUREMENT_INTERVAL) {
-			uint64_t throughput = (float)(_bytesAckedSinceLastThroughputEstimation * 8) / ((float)timeSinceThroughputEstimate / (float)1000);
+			uint64_t throughput = (uint64_t)((float)(_bytesAckedSinceLastThroughputEstimation * 8) / ((float)timeSinceThroughputEstimate / (float)1000));
 			_throughputSamples.push(throughput);
 			_maxLifetimeThroughput = throughput > _maxLifetimeThroughput ? throughput : _maxLifetimeThroughput;
 			_lastThroughputEstimation = now;
@@ -416,7 +405,7 @@ public:
 			if (it != _outQoSRecords.end()) {
 				uint16_t rtt = (uint16_t)(now - it->second);
 				uint16_t rtt_compensated = rtt - rx_ts[j];
-				float latency = rtt_compensated / 2.0;
+				uint16_t latency = rtt_compensated / 2;
 				updateLatency(latency, now);
 				_outQoSRecords.erase(it);
 			}
@@ -440,7 +429,7 @@ public:
 			uint64_t id = it->first;
 			memcpy(qosBuffer, &id, sizeof(uint64_t));
 			qosBuffer+=sizeof(uint64_t);
-			uint16_t holdingTime = (now - it->second);
+			uint16_t holdingTime = (uint16_t)(now - it->second);
 			memcpy(qosBuffer, &holdingTime, sizeof(uint16_t));
 			qosBuffer+=sizeof(uint16_t);
 			len+=sizeof(uint64_t)+sizeof(uint16_t);
@@ -592,11 +581,11 @@ public:
 			float throughput_cv = _throughputSamples.mean() > 0 ? _throughputSamples.stddev() / _throughputSamples.mean() : 1;
 
 			// Form an exponential cutoff and apply contribution weights
-			float pdv_contrib = exp((-1)*normalized_pdv) * ZT_PATH_CONTRIB_PDV;
-			float latency_contrib = exp((-1)*normalized_la) * ZT_PATH_CONTRIB_LATENCY;
+			float pdv_contrib = expf((-1.0f)*normalized_pdv) * (float)ZT_PATH_CONTRIB_PDV;
+			float latency_contrib = expf((-1.0f)*normalized_la) * (float)ZT_PATH_CONTRIB_LATENCY;
 
 			// Throughput Disturbance Coefficient
-			float throughput_disturbance_contrib = exp((-1)*throughput_cv) * ZT_PATH_CONTRIB_THROUGHPUT_DISTURBANCE;
+			float throughput_disturbance_contrib = expf((-1.0f)*throughput_cv) * (float)ZT_PATH_CONTRIB_THROUGHPUT_DISTURBANCE;
 			_throughputDisturbanceSamples.push(throughput_cv);
 			_lastComputedThroughputDistCoeff = _throughputDisturbanceSamples.mean();
 
