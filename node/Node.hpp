@@ -92,6 +92,7 @@ public:
 	uint64_t address() const;
 	void status(ZT_NodeStatus *status) const;
 	ZT_PeerList *peers() const;
+	ZT_Peer *peer(void *tptr,uint64_t nwid,uint64_t mac) const;
 	ZT_VirtualNetworkConfig *networkConfig(uint64_t nwid) const;
 	ZT_VirtualNetworkList *networks() const;
 	void freeQueryResult(void *qr);

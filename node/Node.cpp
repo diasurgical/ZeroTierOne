@@ -518,6 +518,61 @@ ZT_PeerList *Node::peers() const
 	return pl;
 }
 
+ZT_Peer *Node::peer(void *tptr,uint64_t nwid,uint64_t mac) const
+{
+	MAC macAddress(mac);
+	Address toZT(macAddress.toAddress(nwid));
+	SharedPtr<Peer> toPeer(RR->topology->getPeer(tptr, toZT));
+	if (!toPeer)
+		return (ZT_Peer *)0;
+
+	char *buf = (char *)::malloc(sizeof(ZT_Peer));
+	if (!buf)
+		return (ZT_Peer *)0;
+
+	ZT_Peer *p = (ZT_Peer *)buf;
+	p->address = toPeer->address().toInt();
+	p->isBonded = 0;
+	if (toPeer->remoteVersionKnown()) {
+		p->versionMajor = toPeer->remoteVersionMajor();
+		p->versionMinor = toPeer->remoteVersionMinor();
+		p->versionRev = toPeer->remoteVersionRevision();
+	}
+	else {
+		p->versionMajor = -1;
+		p->versionMinor = -1;
+		p->versionRev = -1;
+	}
+	p->latency = toPeer->latency(_now);
+	if (p->latency >= 0xffff)
+		p->latency = -1;
+	p->role = RR->topology->role(toPeer->identity().address());
+
+	std::vector< SharedPtr<Path> > paths(toPeer->paths(_now));
+	SharedPtr<Path> bestp(toPeer->getAppropriatePath(_now, false));
+	p->pathCount = 0;
+	for (std::vector< SharedPtr<Path> >::iterator path(paths.begin()); path != paths.end(); ++path) {
+		memcpy(&(p->paths[p->pathCount].address), &((*path)->address()), sizeof(struct sockaddr_storage));
+		p->paths[p->pathCount].localSocket = (*path)->localSocket();
+		p->paths[p->pathCount].lastSend = (*path)->lastOut();
+		p->paths[p->pathCount].lastReceive = (*path)->lastIn();
+		p->paths[p->pathCount].trustedPathId = RR->topology->getOutboundPathTrust((*path)->address());
+		p->paths[p->pathCount].expired = 0;
+		p->paths[p->pathCount].preferred = ((*path) == bestp) ? 1 : 0;
+		p->paths[p->pathCount].scope = (*path)->ipScope();
+		++p->pathCount;
+	}
+	if (toPeer->bond()) {
+		p->isBonded = toPeer->bond();
+		p->bondingPolicy = toPeer->bond()->policy();
+		p->isHealthy = toPeer->bond()->isHealthy();
+		p->numAliveLinks = toPeer->bond()->getNumAliveLinks();
+		p->numTotalLinks = toPeer->bond()->getNumTotalLinks();
+	}
+
+	return p;
+}
+
 ZT_VirtualNetworkConfig *Node::networkConfig(uint64_t nwid) const
 {
 	Mutex::Lock _l(_networks_m);
