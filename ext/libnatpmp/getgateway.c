@@ -56,10 +56,15 @@ POSSIBILITY OF SUCH DAMAGE.
 #include <sys/sysctl.h>
 #endif
 
-#ifdef __APPLE__
+#if defined(__APPLE__)
 #undef USE_PROC_NET_ROUTE
 #undef USE_SOCKET_ROUTE
-#define USE_SYSCTL_NET_ROUTE
+    #include <TargetConditionals.h>
+    #if TARGET_OS_IPHONE
+		#undef USE_SYSCTL_NET_ROUTE
+    #else
+		#define USE_SYSCTL_NET_ROUTE
+    #endif
 #endif
 
 #if (defined(sun) && defined(__SVR4))
